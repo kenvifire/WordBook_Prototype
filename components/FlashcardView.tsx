@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import type { Grade, WordSense } from '@/lib/types';
+import type { Grade, PrioritizedWord, WordSense } from '@/lib/types';
 
 export interface FlashcardViewProps {
-  word: WordSense;
+  // `reason` is the AI's explanation of why this word was picked; it is shown
+  // on the card so the prototype's reasoning is visible on screen.
+  word: WordSense & Pick<PrioritizedWord, 'reason'>;
   onGrade: (grade: Grade) => void;
 }
 
@@ -28,6 +30,7 @@ export function FlashcardView({ word, onGrade }: FlashcardViewProps) {
           </span>
         ))}
       </p>
+      <p>Why this word: {word.reason}</p>
       {!revealed && (
         <button type="button" onClick={() => setRevealed(true)}>
           Show answer

@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { GateStatusView } from '@/components/GateStatusView';
-import { computeGateStatus } from '@/lib/srs/gate';
-import { getCardsForSection } from '@/lib/store/cardStore';
+import { getAndMaybeUnlockGateStatus } from '@/lib/services/gateService';
 
 export default async function GatePage({
   params,
@@ -9,7 +8,7 @@ export default async function GatePage({
   params: Promise<{ sectionId: string }>;
 }) {
   const { sectionId } = await params;
-  const status = computeGateStatus(getCardsForSection(sectionId));
+  const status = getAndMaybeUnlockGateStatus(sectionId);
 
   return (
     <main>

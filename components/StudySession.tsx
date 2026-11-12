@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FlashcardView } from '@/components/FlashcardView';
 import type { Grade } from '@/lib/types';
@@ -14,9 +14,19 @@ export interface StudySessionProps {
 export function StudySession({ sectionId, deck }: StudySessionProps) {
   const router = useRouter();
   const [index, setIndex] = useState(0);
+  const isEmpty = deck.words.length === 0;
 
-  if (deck.words.length === 0) {
-    return <p>No words to study in this section.</p>;
+  // An empty deck auto-passes the gate (computeGateStatus([]) is passed: true).
+  // Send the learner to the gate page, which runs getAndMaybeUnlockGateStatus
+  // to persist the unlock and then links onward to /read — no dead end.
+  useEffect(() => {
+    if (isEmpty) {
+      router.replace(`/sections/${sectionId}/gate`);
+    }
+  }, [isEmpty, router, sectionId]);
+
+  if (isEmpty) {
+    return <p>No new words to study in this section. Continuing...</p>;
   }
 
   const word = deck.words[index];

@@ -1,6 +1,5 @@
-import { getCardsForSection } from '@/lib/store/cardStore';
-import { computeGateStatus } from '@/lib/srs/gate';
-import { isSectionUnlocked, unlockSection } from '@/lib/store/learnerStore';
+import { getAndMaybeUnlockGateStatus } from '@/lib/services/gateService';
+import { isSectionUnlocked } from '@/lib/store/learnerStore';
 
 export async function GET(
   request: Request,
@@ -8,10 +7,7 @@ export async function GET(
 ) {
   const { sectionId } = await params;
 
-  const status = computeGateStatus(getCardsForSection(sectionId));
-  if (status.passed) {
-    unlockSection(sectionId);
-  }
+  const status = getAndMaybeUnlockGateStatus(sectionId);
 
   return Response.json({ ...status, unlocked: isSectionUnlocked(sectionId) }, { status: 200 });
 }
