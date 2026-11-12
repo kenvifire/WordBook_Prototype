@@ -1,4 +1,5 @@
 import type { AIClient } from './client';
+import { stripCodeFence } from './stripCodeFence';
 import type { CandidateWord, PrioritizedWord } from '../types';
 
 export const DECK_SIZE_LIMIT = 12;
@@ -50,7 +51,7 @@ function isRawEntry(value: unknown): value is RawPrioritizedEntry {
 function parseResponse(response: string): RawPrioritizedEntry[] | null {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(response);
+    parsed = JSON.parse(stripCodeFence(response));
   } catch {
     return null;
   }

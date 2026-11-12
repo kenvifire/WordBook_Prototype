@@ -59,3 +59,14 @@ test('drops an already-known token even if the AI response includes it (ignores 
     { token: 'algodonoso', sentence: 'Es algodonoso.', occurrences: 1, reason: 'rare, descriptive', priorityScore: 0.9 },
   ]);
 });
+
+test('parses a valid JSON response wrapped in a markdown code fence instead of falling back', async () => {
+  const candidates = [{ token: 'burro', sentence: 'El burro camina.', occurrences: 3 }];
+  const body = JSON.stringify([{ token: 'burro', reason: 'frequent, central to the story', priorityScore: 0.7 }]);
+  for (const response of ['```json\n' + body + '\n```', '```\n' + body + '\n```', '  ```json ' + body + ' ```  ']) {
+    const result = await prioritizeWords(fakeClient(response), candidates, []);
+    expect(result).toEqual([
+      { token: 'burro', sentence: 'El burro camina.', occurrences: 3, reason: 'frequent, central to the story', priorityScore: 0.7 },
+    ]);
+  }
+});

@@ -1,4 +1,5 @@
 import type { AIClient } from './client';
+import { stripCodeFence } from './stripCodeFence';
 import type { WordSense } from '../types';
 
 interface RawContextSense {
@@ -28,7 +29,7 @@ function isNonEmptyString(value: unknown): value is string {
 function parseResponse(response: string): RawContextSense | null {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(response);
+    parsed = JSON.parse(stripCodeFence(response));
   } catch {
     return null;
   }

@@ -22,3 +22,10 @@ test('falls back when the AI response is missing a required field', async () => 
   const result = await getContextSense(client, { token: 'burro', sentence: 'El burro camina.' });
   expect(result.definitionEn).toBe('(definition unavailable)');
 });
+
+test('parses a valid JSON response wrapped in a markdown code fence instead of falling back', async () => {
+  const body = JSON.stringify({ definitionEn: 'a small donkey', translationEn: 'donkey', exampleEs: 'El burro es pequeño.' });
+  const client: AIClient = { complete: vi.fn().mockResolvedValue('```json\n' + body + '\n```') };
+  const result = await getContextSense(client, { token: 'burro', sentence: 'El burro camina.' });
+  expect(result).toEqual({ token: 'burro', sentence: 'El burro camina.', definitionEn: 'a small donkey', translationEn: 'donkey', exampleEs: 'El burro es pequeño.' });
+});
