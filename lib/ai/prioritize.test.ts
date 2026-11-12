@@ -44,3 +44,18 @@ test('a section where every candidate is already known returns an empty deck, no
   const result = await prioritizeWords(client, [{ token: 'burro', sentence: 's', occurrences: 2 }], ['burro']);
   expect(result).toEqual([]);
 });
+
+test('drops an already-known token even if the AI response includes it (ignores the model obeying the prompt)', async () => {
+  const candidates = [
+    { token: 'burro', sentence: 'El burro camina.', occurrences: 3 },
+    { token: 'algodonoso', sentence: 'Es algodonoso.', occurrences: 1 },
+  ];
+  const client = fakeClient(JSON.stringify([
+    { token: 'burro', reason: 'should have been excluded', priorityScore: 0.95 },
+    { token: 'algodonoso', reason: 'rare, descriptive', priorityScore: 0.9 },
+  ]));
+  const result = await prioritizeWords(client, candidates, ['burro']);
+  expect(result).toEqual([
+    { token: 'algodonoso', sentence: 'Es algodonoso.', occurrences: 1, reason: 'rare, descriptive', priorityScore: 0.9 },
+  ]);
+});

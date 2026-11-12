@@ -74,6 +74,7 @@ export async function prioritizeWords(
     return frequencyFallback(candidates, knownWords, limit);
   }
 
+  const known = new Set(knownWords);
   const byToken = new Map(candidates.map((c) => [c.token, c]));
 
   const merged: PrioritizedWord[] = [];
@@ -85,6 +86,7 @@ export async function prioritizeWords(
     ) {
       continue;
     }
+    if (known.has(entry.token)) continue;
     const candidate = byToken.get(entry.token);
     if (!candidate) continue;
     merged.push({
