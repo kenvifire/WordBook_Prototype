@@ -11,6 +11,7 @@ export interface WordPopoverProps {
 
 export function WordPopover({ sectionId, token, sentence, onClose }: WordPopoverProps) {
   const [translation, setTranslation] = useState<string | null>(null);
+  const [addedToQueue, setAddedToQueue] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -23,6 +24,8 @@ export function WordPopover({ sectionId, token, sentence, onClose }: WordPopover
       const data = await response.json();
       if (!cancelled) {
         setTranslation(data.translation);
+        // The tap route also creates a review card for this word; confirm it.
+        setAddedToQueue(response.ok && Boolean(data.card));
       }
     }
 
@@ -36,6 +39,7 @@ export function WordPopover({ sectionId, token, sentence, onClose }: WordPopover
   return (
     <div>
       {translation === null ? <p>Loading...</p> : <p>{translation}</p>}
+      {addedToQueue && <p>Added to your review queue</p>}
       <button type="button" onClick={onClose}>
         Close
       </button>
