@@ -1,0 +1,24 @@
+import Link from 'next/link';
+import { GateStatusView } from '@/components/GateStatusView';
+import { computeGateStatus } from '@/lib/srs/gate';
+import { getCardsForSection } from '@/lib/store/cardStore';
+
+export default async function GatePage({
+  params,
+}: {
+  params: Promise<{ sectionId: string }>;
+}) {
+  const { sectionId } = await params;
+  const status = computeGateStatus(getCardsForSection(sectionId));
+
+  return (
+    <main>
+      <GateStatusView status={status} />
+      {status.passed ? (
+        <Link href={`/sections/${sectionId}/read`}>Continue reading</Link>
+      ) : (
+        <Link href={`/sections/${sectionId}/study`}>Back to study</Link>
+      )}
+    </main>
+  );
+}
