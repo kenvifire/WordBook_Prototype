@@ -7,7 +7,7 @@ export const DECK_SIZE_LIMIT = 12;
 export const FALLBACK_REASON = 'frequency fallback (AI unavailable)';
 
 /** True when `words` came from the frequency fallback rather than a real AI response. */
-export function isPrioritizeFallback(words: PrioritizedWord[]): boolean {
+export function isPrioritizeFallback(words: Pick<PrioritizedWord, 'reason'>[]): boolean {
   return words.some((w) => w.reason === FALLBACK_REASON);
 }
 

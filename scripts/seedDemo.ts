@@ -2,6 +2,9 @@
  * Demo Day seed script.
  *
  * Pre-seeds the demo learner's state before a live walkthrough:
+ *   0. Resets learner/card/review state (learner.json, cards.json,
+ *      reviews.json) so a rehearsal doesn't leak into Demo Day. The AI cache
+ *      (ai-cache/) is deliberately kept so pre-warmed output survives.
  *   1. Marks section 0's vocabulary as already known and unlocks section 0,
  *      so the learner "arrives" having already mastered the first section.
  *   2. Pre-warms the AI cache for section 1 (the live-demo section) by
@@ -9,11 +12,38 @@
  *      on a live OpenAI call succeeding in front of judges.
  *
  * Run with: npm run seed:demo
+ * Reads .env.local (if present) for OPENAI_API_KEY etc.; tsx doesn't load it
+ * automatically the way `next dev` does. Variables already set in the shell win.
  */
+import fs from 'node:fs';
 import { loadBook, DEMO_BOOK_ID } from '../lib/text/sections';
 import { extractCandidates } from '../lib/text/filter';
 import { markWordsKnown, unlockSection } from '../lib/store/learnerStore';
+import { dataPath } from '../lib/store/jsonStore';
 import { buildDeck } from '../lib/services/deckService';
+import { isPrioritizeFallback } from '../lib/ai/prioritize';
+import { isContextSenseFallback } from '../lib/ai/contextSense';
+
+if (fs.existsSync('.env.local')) {
+  process.loadEnvFile('.env.local');
+}
+
+// Learner progress files that a rehearsal mutates. ai-cache/ is intentionally
+// NOT listed: the whole point of pre-warming it is to survive rehearsals.
+const RESETTABLE_STATE_FILES = ['learner.json', 'cards.json', 'reviews.json'];
+
+function resetLearnerState(): void {
+  for (const file of RESETTABLE_STATE_FILES) {
+    const filePath = dataPath(file);
+    if (fs.existsSync(filePath)) {
+      fs.rmSync(filePath);
+      console.log(`Reset: deleted ${filePath}`);
+    } else {
+      console.log(`Reset: ${filePath} not present (already clean)`);
+    }
+  }
+  console.log(`Reset: kept AI cache at ${dataPath('ai-cache')} untouched.`);
+}
 
 async function main(): Promise<void> {
   const book = loadBook(DEMO_BOOK_ID);
@@ -26,6 +56,9 @@ async function main(): Promise<void> {
     );
   }
 
+  // Step 0: wipe any learner/card/review state left over from a rehearsal.
+  resetLearnerState();
+
   // Step 1: mark section0 as already mastered.
   const candidates0 = extractCandidates(section0.text);
   markWordsKnown(candidates0.map((c) => c.token));
@@ -37,13 +70,12 @@ async function main(): Promise<void> {
 
   // Step 2: pre-warm the AI cache for the live-demo section.
   // Refuse to even attempt this if there's no API key: buildDeck's AI helpers
-  // catch request failures internally and fall back to placeholder content,
-  // and withCache would then persist that placeholder content to disk as if
-  // it were real — which would silently poison the cache for Demo Day. Fail
-  // fast instead of writing known-bad data to the real cache location.
+  // catch request failures internally and fall back to placeholder content.
+  // buildDeck no longer caches fallback results, but a keyless run can't warm
+  // anything, so fail fast with a clear message instead.
   if (!process.env.OPENAI_API_KEY) {
     console.error(
-      'ERROR: OPENAI_API_KEY is not set. Skipping step 3 (buildDeck for ' +
+      'ERROR: OPENAI_API_KEY is not set. Skipping step 2 (buildDeck for ' +
         `"${section1.id}") entirely — no AI call will be made and nothing will be written ` +
         'to the AI cache. Re-run this script with a real OPENAI_API_KEY set before Demo Day.'
     );
@@ -58,19 +90,18 @@ async function main(): Promise<void> {
     `Warming AI cache for live-demo section "${section1.id}" (${section1.title})...`
   );
   const deck = await buildDeck(section1.id);
-  const usedFallback = deck.words.some(
-    (w) => w.reason.includes('AI unavailable') || w.definitionEn === '(definition unavailable)'
-  );
+  const usedFallback =
+    isPrioritizeFallback(deck.words) || deck.words.some((w) => isContextSenseFallback(w));
   if (usedFallback) {
     console.error(
-      `ERROR: AI cache for section "${section1.id}" was warmed with FALLBACK placeholder ` +
+      `ERROR: building the deck for section "${section1.id}" fell back to placeholder ` +
         'content (the AI call failed, e.g. invalid key, API error, or rate limit) — this is ' +
-        'not real AI output. Fix the underlying AI call and re-run (clearing the stale cache ' +
-        'entries first) before Demo Day.'
+        'not real AI output, and the fallback entries were NOT cached. Fix the underlying AI ' +
+        'call and re-run before Demo Day.'
     );
     console.log('Demo seed INCOMPLETE.');
     console.log(`  Pre-mastered / unlocked: ${section0.id}`);
-    console.log(`  Live-demo target:        ${section1.id} (AI cache warmed with FALLBACK content only)`);
+    console.log(`  Live-demo target:        ${section1.id} (AI cache NOT fully warmed: fallback content)`);
     process.exitCode = 1;
     return;
   }
