@@ -149,7 +149,9 @@ export const SPANISH_STOPWORDS: Set<string>;
 export function extractCandidates(text: string, opts?: { stopwords?: Set<string> }): CandidateWord[];
 ```
 
-**Extraction rule (exact, since it's load-bearing and not derivable from the signature alone):** for each unique normalized token, scan every occurrence across the text. If *any* occurrence is capitalized in the source *and* is not the first word of its sentence, treat the token as a proper noun and exclude it entirely — even its sentence-initial occurrences. Also exclude tokens in the stopword set (regardless of case/position), tokens shorter than 2 characters, and tokens that are purely digits. For each surviving token, record `occurrences` (count across the whole text) and `sentence` (the first sentence it appears in, verbatim).
+**Extraction rule (exact, since it's load-bearing and not derivable from the signature alone; corrected during implementation — see Task 2's ledger ruling in the plan's execution record):** for each unique normalized token, scan every occurrence across the text. If the token is capitalized in the source in *every* occurrence (i.e. it never appears in lowercase form anywhere in the text), treat it as a proper noun and exclude it entirely, regardless of sentence position. Also exclude tokens in the stopword set (regardless of case/position), tokens shorter than 2 characters, and tokens that are purely digits. For each surviving token, record `occurrences` (count across the whole text) and `sentence` (the first sentence it appears in, verbatim).
+
+*(Accepted trade-off: a genuine content word that happens to occur only once in a short section, at the start of a sentence, would be wrongly excluded as a false-positive "proper noun." This is acceptable for the MVP — sections are short chapters and only the top `DECK_SIZE_LIMIT` words get taught anyway — and is simpler and more testable than tracking sentence-initial position.)*
 
 - [ ] **Step 1: Write the failing tests**
 
