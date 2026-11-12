@@ -36,13 +36,24 @@ async function main(): Promise<void> {
   );
 
   // Step 2: pre-warm the AI cache for the live-demo section.
+  // Refuse to even attempt this if there's no API key: buildDeck's AI helpers
+  // catch request failures internally and fall back to placeholder content,
+  // and withCache would then persist that placeholder content to disk as if
+  // it were real — which would silently poison the cache for Demo Day. Fail
+  // fast instead of writing known-bad data to the real cache location.
   if (!process.env.OPENAI_API_KEY) {
-    console.warn(
-      'WARNING: OPENAI_API_KEY is not set. buildDeck() will fall back to placeholder ' +
-        'content instead of real AI output, and that placeholder content will be cached — ' +
-        're-run this script with a real OPENAI_API_KEY (after clearing the AI cache) before Demo Day.'
+    console.error(
+      'ERROR: OPENAI_API_KEY is not set. Skipping step 3 (buildDeck for ' +
+        `"${section1.id}") entirely — no AI call will be made and nothing will be written ` +
+        'to the AI cache. Re-run this script with a real OPENAI_API_KEY set before Demo Day.'
     );
+    console.log('Demo seed INCOMPLETE.');
+    console.log(`  Pre-mastered / unlocked: ${section0.id}`);
+    console.log(`  Live-demo target:        ${section1.id} (AI cache NOT warmed)`);
+    process.exitCode = 1;
+    return;
   }
+
   console.log(
     `Warming AI cache for live-demo section "${section1.id}" (${section1.title})...`
   );
@@ -51,16 +62,22 @@ async function main(): Promise<void> {
     (w) => w.reason.includes('AI unavailable') || w.definitionEn === '(definition unavailable)'
   );
   if (usedFallback) {
-    console.warn(
-      `AI cache for section "${section1.id}" was warmed with FALLBACK placeholder content ` +
-        '(the AI call failed or was unavailable) — this is not real AI output.'
+    console.error(
+      `ERROR: AI cache for section "${section1.id}" was warmed with FALLBACK placeholder ` +
+        'content (the AI call failed, e.g. invalid key, API error, or rate limit) — this is ' +
+        'not real AI output. Fix the underlying AI call and re-run (clearing the stale cache ' +
+        'entries first) before Demo Day.'
     );
-  } else {
-    console.log(
-      `AI cache warmed for section "${section1.id}": built a deck of ${deck.words.length} words using real AI output.`
-    );
+    console.log('Demo seed INCOMPLETE.');
+    console.log(`  Pre-mastered / unlocked: ${section0.id}`);
+    console.log(`  Live-demo target:        ${section1.id} (AI cache warmed with FALLBACK content only)`);
+    process.exitCode = 1;
+    return;
   }
 
+  console.log(
+    `AI cache warmed for section "${section1.id}": built a deck of ${deck.words.length} words using real AI output.`
+  );
   console.log('Demo seed complete.');
   console.log(`  Pre-mastered / unlocked: ${section0.id}`);
   console.log(`  Live-demo target:        ${section1.id}`);
