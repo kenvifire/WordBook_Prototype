@@ -44,5 +44,5 @@ export function StudySession({ sectionId, deck }: StudySessionProps) {
     }
   }
 
-  return <FlashcardView word={word} onGrade={handleGrade} />;
+  return <FlashcardView key={word.card.id} word={word} onGrade={handleGrade} />;
 }
