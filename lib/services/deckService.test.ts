@@ -6,16 +6,18 @@ import path from 'node:path';
 vi.mock('@/lib/ai/client', () => ({
   createOpenAIClient: vi.fn(() => ({ complete: vi.fn() })),
 }));
-vi.mock('@/lib/ai/prioritize', () => ({
+vi.mock('@/lib/ai/prioritize', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/ai/prioritize')>()),
   prioritizeWords: vi.fn(),
 }));
-vi.mock('@/lib/ai/contextSense', () => ({
+vi.mock('@/lib/ai/contextSense', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/ai/contextSense')>()),
   getContextSense: vi.fn(),
 }));
 
 import { buildDeck } from './deckService';
-import { prioritizeWords } from '@/lib/ai/prioritize';
-import { getContextSense } from '@/lib/ai/contextSense';
+import { prioritizeWords, FALLBACK_REASON } from '@/lib/ai/prioritize';
+import { getContextSense, FALLBACK_DEFINITION } from '@/lib/ai/contextSense';
 
 let tmp: string;
 let originalDataDir: string | undefined;
@@ -73,4 +75,48 @@ test('buildDeck merges prioritized words, context sense, and a card into DeckWor
 
 test('buildDeck throws for an unknown section', async () => {
   await expect(buildDeck('nonexistent-section-999')).rejects.toThrow();
+});
+
+function cacheFiles(): string[] {
+  const dir = path.join(tmp, 'ai-cache');
+  return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+}
+
+test('fallback AI results are never persisted to the cache, and a later call retries the AI', async () => {
+  vi.mocked(prioritizeWords).mockResolvedValue([
+    { token: 'platero', sentence: 'PLATERO es pequeño.', occurrences: 3, reason: FALLBACK_REASON, priorityScore: 3 },
+  ]);
+  vi.mocked(getContextSense).mockResolvedValue({
+    token: 'platero',
+    sentence: 'PLATERO es pequeño.',
+    definitionEn: FALLBACK_DEFINITION,
+    translationEn: 'platero',
+    exampleEs: 'PLATERO es pequeño.',
+  });
+
+  const fallbackDeck = await buildDeck('platero-y-yo-0');
+
+  // The caller still gets the fallback content...
+  expect(fallbackDeck.words[0]).toMatchObject({ reason: FALLBACK_REASON, definitionEn: FALLBACK_DEFINITION });
+  // ...but nothing was written to the AI cache.
+  expect(cacheFiles()).toEqual([]);
+
+  // A later run with a working AI genuinely calls it again and caches the real result.
+  vi.mocked(prioritizeWords).mockResolvedValue([
+    { token: 'platero', sentence: 'PLATERO es pequeño.', occurrences: 3, reason: 'central character', priorityScore: 9 },
+  ]);
+  vi.mocked(getContextSense).mockResolvedValue({
+    token: 'platero',
+    sentence: 'PLATERO es pequeño.',
+    definitionEn: 'a small donkey',
+    translationEn: 'Platero',
+    exampleEs: 'Platero es un burro.',
+  });
+
+  const realDeck = await buildDeck('platero-y-yo-0');
+
+  expect(prioritizeWords).toHaveBeenCalledTimes(2);
+  expect(getContextSense).toHaveBeenCalledTimes(2);
+  expect(realDeck.words[0]).toMatchObject({ reason: 'central character', definitionEn: 'a small donkey' });
+  expect(cacheFiles()).toHaveLength(2);
 });

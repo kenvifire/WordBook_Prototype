@@ -3,7 +3,12 @@ import type { CandidateWord, PrioritizedWord } from '../types';
 
 export const DECK_SIZE_LIMIT = 12;
 
-const FALLBACK_REASON = 'frequency fallback (AI unavailable)';
+export const FALLBACK_REASON = 'frequency fallback (AI unavailable)';
+
+/** True when `words` came from the frequency fallback rather than a real AI response. */
+export function isPrioritizeFallback(words: PrioritizedWord[]): boolean {
+  return words.some((w) => w.reason === FALLBACK_REASON);
+}
 
 interface RawPrioritizedEntry {
   token: unknown;

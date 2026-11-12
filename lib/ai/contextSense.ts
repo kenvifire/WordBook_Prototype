@@ -38,11 +38,18 @@ function parseResponse(response: string): RawContextSense | null {
   return { definitionEn: v.definitionEn, translationEn: v.translationEn, exampleEs: v.exampleEs };
 }
 
+export const FALLBACK_DEFINITION = '(definition unavailable)';
+
+/** True when `sense` is the placeholder fallback rather than a real AI response. */
+export function isContextSenseFallback(sense: WordSense): boolean {
+  return sense.definitionEn === FALLBACK_DEFINITION;
+}
+
 function fallback(word: { token: string; sentence: string }): WordSense {
   return {
     token: word.token,
     sentence: word.sentence,
-    definitionEn: '(definition unavailable)',
+    definitionEn: FALLBACK_DEFINITION,
     translationEn: word.token,
     exampleEs: word.sentence,
   };
