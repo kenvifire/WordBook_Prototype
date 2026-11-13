@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -22,43 +22,59 @@ const mockCreateClient = createClient as unknown as ReturnType<typeof vi.fn>;
 
 type Row = Record<string, unknown>;
 
-// Supports select().eq().lte().not().order() resolving against an in-memory
-// array of word rows, applying each filter as it's chained.
+// Mirrors the real `.or('last_rating.not.is.null,book_id.is.null')`
+// semantics against an in-memory table, so this test exercises the actual
+// filter the regression fix depends on rather than a mock that always
+// returns everything.
 function makeWordsBuilder(rows: Row[]) {
-  let filtered = [...rows];
   const builder: any = {};
-  builder.select = vi.fn(() => {
-    filtered = [...rows];
-    return builder;
-  });
+  let userId: unknown;
+  let maxDate: unknown;
+  let orClause: string | undefined;
+
+  builder.select = vi.fn(() => builder);
   builder.eq = vi.fn((column: string, value: unknown) => {
-    filtered = filtered.filter((r) => r[column] === value);
+    if (column === 'user_id') userId = value;
     return builder;
   });
   builder.lte = vi.fn((column: string, value: unknown) => {
-    filtered = filtered.filter((r) => (r[column] as string) <= (value as string));
+    if (column === 'next_review_date') maxDate = value;
     return builder;
   });
-  builder.not = vi.fn((column: string, operator: string, value: unknown) => {
-    if (operator === 'is' && value === null) {
-      filtered = filtered.filter((r) => r[column] !== null && r[column] !== undefined);
-    }
+  builder.or = vi.fn((clause: string) => {
+    orClause = clause;
     return builder;
   });
-  builder.order = vi.fn(() => Promise.resolve({ data: filtered, error: null }));
+  // `.order()` is the terminal call in the real query (the whole chain is
+  // awaited), so it's where this mock actually applies every filter.
+  builder.order = vi.fn(() => {
+    const data = rows.filter((row) => {
+      if (row.user_id !== userId) return false;
+      if (maxDate !== undefined && (row.next_review_date as string) > (maxDate as string)) return false;
+      if (!orClause) return true;
+      const conditions = orClause.split(',');
+      return conditions.some((cond) => {
+        if (cond === 'last_rating.not.is.null') return row.last_rating !== null;
+        if (cond === 'book_id.is.null') return row.book_id === null;
+        return false;
+      });
+    });
+    return Promise.resolve({ data, error: null });
+  });
   return builder;
 }
 
 function makeSupabaseMock(options: { user: { id: string } | null; words: Row[] }) {
   const words = makeWordsBuilder(options.words);
-
   const from = vi.fn((table: string) => {
     if (table === 'words') return words;
     throw new Error(`Unexpected table: ${table}`);
   });
 
   return {
-    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: options.user }, error: null }) },
+    auth: {
+      getUser: vi.fn().mockResolvedValue({ data: { user: options.user }, error: null }),
+    },
     from,
     words,
   } as any;
@@ -67,26 +83,22 @@ function makeSupabaseMock(options: { user: { id: string } | null; words: Row[] }
 beforeEach(() => {
   mockRedirect.mockClear();
   mockCreateClient.mockReset();
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date('2026-01-15T00:00:00.000Z'));
 });
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-
-describe('ReviewPage (I9)', () => {
-  test('an unrated word (last_rating null, e.g. just extracted from a book) does not appear', async () => {
+describe('ReviewPage', () => {
+  test('I9 regression: a word added via "Add to my vocabulary" (no book_id, never rated) still appears', async () => {
+    const today = new Date().toISOString().slice(0, 10);
     const supabase = makeSupabaseMock({
       user: { id: 'user-1' },
       words: [
         {
           id: 'word-1',
+          word: 'serendipity',
+          definition: 'a fortunate accident',
           user_id: 'user-1',
-          word: 'nevertouched',
-          definition: 'something',
-          next_review_date: '2026-01-01',
+          book_id: null,
           last_rating: null,
+          next_review_date: today,
         },
       ],
     });
@@ -95,21 +107,22 @@ describe('ReviewPage (I9)', () => {
     const jsx = await ReviewPage();
     render(jsx);
 
-    expect(screen.queryByText('nevertouched')).not.toBeInTheDocument();
-    expect(screen.getByText('No more words due for review right now.')).toBeInTheDocument();
+    expect(screen.getByText('serendipity')).toBeInTheDocument();
   });
 
-  test('a rated, due word appears', async () => {
+  test('a never-rated word that DOES belong to a book is still excluded (I9 original fix)', async () => {
+    const today = new Date().toISOString().slice(0, 10);
     const supabase = makeSupabaseMock({
       user: { id: 'user-1' },
       words: [
         {
           id: 'word-1',
+          word: 'ephemeral',
+          definition: 'lasting a short time',
           user_id: 'user-1',
-          word: 'alreadyrated',
-          definition: 'something',
-          next_review_date: '2026-01-01',
-          last_rating: 'good',
+          book_id: 'book-1',
+          last_rating: null,
+          next_review_date: today,
         },
       ],
     });
@@ -118,6 +131,30 @@ describe('ReviewPage (I9)', () => {
     const jsx = await ReviewPage();
     render(jsx);
 
-    expect(screen.getByText('alreadyrated')).toBeInTheDocument();
+    expect(screen.queryByText('ephemeral')).not.toBeInTheDocument();
+  });
+
+  test('a rated word from a book still appears (unaffected by the exception)', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const supabase = makeSupabaseMock({
+      user: { id: 'user-1' },
+      words: [
+        {
+          id: 'word-1',
+          word: 'luminous',
+          definition: 'giving off light',
+          user_id: 'user-1',
+          book_id: 'book-1',
+          last_rating: 'good',
+          next_review_date: today,
+        },
+      ],
+    });
+    mockCreateClient.mockResolvedValue(supabase);
+
+    const jsx = await ReviewPage();
+    render(jsx);
+
+    expect(screen.getByText('luminous')).toBeInTheDocument();
   });
 });

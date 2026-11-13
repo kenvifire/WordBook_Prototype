@@ -23,12 +23,19 @@ export default async function ReviewPage() {
   // all show up here as "due" despite never having been practiced once.
   // Excluding never-rated words keeps this page to words the learner has
   // actually seen before.
+  //
+  // Exception: a word added via the reader's "Add to my vocabulary" button
+  // (app/api/words/lookup/route.ts) has no section link and no book_id, so
+  // the practice flow never surfaces it either. Without this
+  // `book_id.is.null` carve-out, such a word would never appear anywhere —
+  // tapped-and-added words must still show up here even before their first
+  // rating.
   const { data: wordRows } = await supabase
     .from('words')
     .select('id, word, definition')
     .eq('user_id', user.id)
     .lte('next_review_date', today)
-    .not('last_rating', 'is', null)
+    .or('last_rating.not.is.null,book_id.is.null')
     .order('next_review_date', { ascending: true });
 
   const words = (wordRows ?? []) as FlashcardWord[];
