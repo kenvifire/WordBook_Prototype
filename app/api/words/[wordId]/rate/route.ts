@@ -1,0 +1,91 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { applyRating, type Rating } from '@/lib/srs/sm2';
+import { maybeUnlockNextSection } from '@/lib/sections/sectionService';
+
+type WordRow = {
+  id: string;
+  user_id: string;
+  word: string;
+  definition: string | null;
+  book_id: string | null;
+  repetitions: number;
+  ease_factor: number;
+  interval_days: number;
+  next_review_date: string;
+  last_rating: string | null;
+  created_at: string;
+};
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ wordId: string }> }
+) {
+  const { wordId } = await params;
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { rating } = (await request.json()) as { rating: Rating };
+
+  // Filter by user_id for a clean 404 rather than relying on RLS alone to
+  // silently return zero rows (same pattern as the book-ownership guard).
+  const { data: wordRow, error: wordError } = await supabase
+    .from('words')
+    .select('*')
+    .eq('id', wordId)
+    .eq('user_id', user.id)
+    .single();
+
+  if (wordError || !wordRow) {
+    return NextResponse.json({ error: 'Word not found' }, { status: 404 });
+  }
+
+  const existingWord = wordRow as WordRow;
+
+  const result = applyRating(
+    {
+      repetitions: existingWord.repetitions,
+      easeFactor: existingWord.ease_factor,
+      intervalDays: existingWord.interval_days,
+    },
+    rating,
+    new Date()
+  );
+
+  const updates = {
+    repetitions: result.repetitions,
+    ease_factor: result.easeFactor,
+    interval_days: result.intervalDays,
+    next_review_date: result.nextReviewDate.toISOString().slice(0, 10),
+    last_rating: result.lastRating,
+  };
+
+  const { error: updateError } = await supabase
+    .from('words')
+    .update(updates)
+    .eq('id', wordId);
+
+  if (updateError) {
+    return NextResponse.json({ error: updateError.message }, { status: 500 });
+  }
+
+  // A word can belong to more than one section's vocabulary, so every
+  // section it's linked to gets its own unlock check.
+  const { data: sectionWordRows } = await supabase
+    .from('section_words')
+    .select('section_id')
+    .eq('word_id', wordId);
+
+  for (const row of (sectionWordRows ?? []) as { section_id: string }[]) {
+    await maybeUnlockNextSection(supabase, row.section_id);
+  }
+
+  return NextResponse.json({ ...existingWord, ...updates });
+}
