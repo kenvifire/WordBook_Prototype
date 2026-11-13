@@ -1,40 +1,18 @@
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-async function updateSession(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
+const PROTECTED_PREFIXES = ['/library', '/book', '/review', '/settings'];
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          supabaseResponse = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) => {
-            supabaseResponse.cookies.set(name, value, options);
-          });
-        },
-      },
-    }
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  const isProtected = PROTECTED_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
 
-  // Do not run any code between createServerClient and
-  // supabase.auth.getUser(). A simple mistake could make it very hard to debug
-  // issues with users being randomly logged out.
-  await supabase.auth.getUser();
+  if (isProtected && !request.cookies.get('session')) {
+    return NextResponse.redirect(new URL('/login', request.url));
+  }
 
-  // Important: return the supabaseResponse object as it is, unmodified. If
-  // you create a new response object, make sure to copy over the cookies.
-  return supabaseResponse;
-}
-
-export async function middleware(request: NextRequest) {
-  return updateSession(request);
+  return NextResponse.next();
 }
 
 export const config = {

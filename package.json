@@ -14,9 +14,9 @@
     "next": "^15",
     "react": "^19",
     "react-dom": "^19",
-    "@supabase/supabase-js": "^2",
-    "@supabase/ssr": "^0.5",
-    "epub2": "^3"
+    "epub2": "^3",
+    "firebase": "^11",
+    "firebase-admin": "^13"
   },
   "devDependencies": {
     "typescript": "^5",
