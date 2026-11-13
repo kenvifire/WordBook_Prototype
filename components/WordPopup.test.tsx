@@ -13,7 +13,7 @@ describe('WordPopup', () => {
     vi.unstubAllGlobals();
   });
 
-  test('clicking a word shows its definition once the lookup resolves, and an add-to-vocabulary confirmation after posting', async () => {
+  test('I4: tapping a word looks it up read-only (add: false) and shows its definition without adding it', async () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       json: async () => ({ word: 'ephemeral', definition: 'lasting a short time' }),
@@ -28,16 +28,38 @@ describe('WordPopup', () => {
       '/api/words/lookup',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ word: 'ephemeral' }),
+        body: JSON.stringify({ word: 'ephemeral', add: false }),
       })
     );
 
     expect(await screen.findByText('lasting a short time')).toBeInTheDocument();
     expect(screen.queryByText('Added ✓')).not.toBeInTheDocument();
+  });
+
+  test('I4: clicking "Add to my vocabulary" actually posts an add request and only then shows Added', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ word: 'ephemeral', definition: 'lasting a short time' }),
+    });
+    const user = userEvent.setup();
+
+    render(<WordPopup word="ephemeral" />);
+
+    await user.click(screen.getByText('ephemeral'));
+    await screen.findByText('lasting a short time');
+    expect(screen.queryByText('Added ✓')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Add to my vocabulary' }));
 
-    expect(screen.getByText('Added ✓')).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/words/lookup',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ word: 'ephemeral', add: true }),
+      })
+    );
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText('Added ✓')).toBeInTheDocument();
   });
 
   test('a failed lookup shows an error instead of a definition', async () => {
@@ -67,5 +89,22 @@ describe('WordPopup', () => {
     await user.click(wordButton);
 
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('I5: a close button hides the popup', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ word: 'gloaming', definition: 'twilight' }),
+    });
+    const user = userEvent.setup();
+
+    render(<WordPopup word="gloaming" />);
+
+    await user.click(screen.getByText('gloaming'));
+    expect(await screen.findByText('twilight')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+
+    expect(screen.queryByText('twilight')).not.toBeInTheDocument();
   });
 });

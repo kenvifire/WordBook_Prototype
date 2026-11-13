@@ -9,20 +9,16 @@ export default function WordPopup({ word }: { word: string }) {
   const [definition, setDefinition] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [added, setAdded] = useState(false);
+  const [adding, setAdding] = useState(false);
 
-  async function handleWordClick() {
-    setOpen(true);
-
-    // Already looked up this word for this popup instance — don't re-fetch.
-    if (definition !== null || loading) return;
-
+  async function runLookup(add: boolean) {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/words/lookup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ word }),
+        body: JSON.stringify({ word, add }),
       });
       if (!res.ok) {
         setError('Could not look up this word.');
@@ -30,11 +26,44 @@ export default function WordPopup({ word }: { word: string }) {
       }
       const data = (await res.json()) as { definition: string | null };
       setDefinition(data.definition ?? 'No definition available.');
+      if (add) {
+        setAdded(true);
+      }
     } catch {
       setError('Could not look up this word.');
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleWordClick() {
+    setOpen(true);
+
+    // Already looked up this word for this popup instance — don't re-fetch.
+    if (definition !== null || loading) return;
+
+    // I4: tapping the word is read-only — it shows the definition but must
+    // not add the word to the SRS queue.
+    await runLookup(false);
+  }
+
+  async function handleAddClick() {
+    if (adding || added) return;
+    setAdding(true);
+    try {
+      // I4: this is the only action that actually inserts the word into the
+      // learner's vocabulary — a plain tap never does.
+      await runLookup(true);
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  function handleClose() {
+    // I5: popups previously had no way to close, so each tap left a
+    // 240px-wide popover covering the following lines until the page
+    // reloaded.
+    setOpen(false);
   }
 
   function handleKeyDown(event: React.KeyboardEvent) {
@@ -58,6 +87,14 @@ export default function WordPopup({ word }: { word: string }) {
 
       {open && (
         <span className="absolute left-0 top-full z-10 mt-1 flex w-60 flex-col gap-2 rounded border bg-white p-3 text-sm shadow-lg">
+          <button
+            type="button"
+            onClick={handleClose}
+            aria-label="Close"
+            className="self-end text-xs text-gray-500 hover:text-gray-800"
+          >
+            ✕
+          </button>
           {loading && <span>Loading…</span>}
           {error && <span className="text-red-600">{error}</span>}
           {!loading && !error && definition && (
@@ -72,13 +109,11 @@ export default function WordPopup({ word }: { word: string }) {
               ) : (
                 <button
                   type="button"
-                  // The lookup POST above already created/reused this word's
-                  // row for the user, so there's nothing left to send — this
-                  // just confirms it to the learner.
-                  onClick={() => setAdded(true)}
-                  className="self-start rounded bg-black px-2 py-1 text-xs text-white"
+                  onClick={handleAddClick}
+                  disabled={adding}
+                  className="self-start rounded bg-black px-2 py-1 text-xs text-white disabled:opacity-50"
                 >
-                  Add to my vocabulary
+                  {adding ? 'Adding…' : 'Add to my vocabulary'}
                 </button>
               )}
             </>

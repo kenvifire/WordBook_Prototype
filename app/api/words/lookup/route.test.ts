@@ -23,6 +23,7 @@ function makeWordsBuilder(existingRows: WordRow[]) {
   const table = [...existingRows];
   let filters: Record<string, unknown> = {};
   const insertedRows: WordRow[] = [];
+  const updateCalls: { data: WordRow; filters: Record<string, unknown> }[] = [];
 
   const builder: any = {};
 
@@ -49,7 +50,35 @@ function makeWordsBuilder(existingRows: WordRow[]) {
     return Promise.resolve({ error: null });
   });
 
+  // Supports the update chain used for the null-definition retry:
+  // .update({ definition }).eq('id', x).is('definition', null)
+  builder.update = vi.fn((data: WordRow) => {
+    let updateFilters: Record<string, unknown> = {};
+    const updateBuilder: any = {};
+    const applyIfMatched = () => {
+      const row = table.find((r) =>
+        Object.entries(updateFilters).every(([col, val]) => r[col] === val)
+      );
+      if (row) {
+        Object.assign(row, data);
+        updateCalls.push({ data, filters: { ...updateFilters } });
+      }
+      return Promise.resolve({ error: null });
+    };
+    updateBuilder.eq = vi.fn((column: string, value: unknown) => {
+      updateFilters = { ...updateFilters, [column]: value };
+      return updateBuilder;
+    });
+    updateBuilder.is = vi.fn((column: string, value: unknown) => {
+      updateFilters = { ...updateFilters, [column]: value };
+      return applyIfMatched();
+    });
+    return updateBuilder;
+  });
+
   builder.getInsertedRows = () => insertedRows;
+  builder.getUpdateCalls = () => updateCalls;
+  builder.getTable = () => table;
   return builder;
 }
 
@@ -109,12 +138,26 @@ describe('POST /api/words/lookup', () => {
     expect(supabase.words.insert).not.toHaveBeenCalled();
   });
 
-  test('a genuinely new word is looked up and inserted with SM-2 defaults', async () => {
+  test('I4: a plain tap-to-define lookup (no add flag) fetches the definition but does not create a row', async () => {
     const supabase = makeSupabaseMock({ user: { id: 'user-1' }, existingRows: [] });
     mockCreateClient.mockResolvedValue(supabase);
     mockFetchDefinition.mockResolvedValue('lasting a short time');
 
     const response = await POST(makeRequest({ word: 'Ephemeral,' }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mockFetchDefinition).toHaveBeenCalledWith('ephemeral');
+    expect(supabase.words.insert).not.toHaveBeenCalled();
+    expect(body).toEqual({ word: 'ephemeral', definition: 'lasting a short time' });
+  });
+
+  test('I4: add: true on a genuinely new word looks it up and inserts it with SM-2 defaults', async () => {
+    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, existingRows: [] });
+    mockCreateClient.mockResolvedValue(supabase);
+    mockFetchDefinition.mockResolvedValue('lasting a short time');
+
+    const response = await POST(makeRequest({ word: 'Ephemeral,', add: true }));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -134,6 +177,7 @@ describe('POST /api/words/lookup', () => {
   test('a word the user already has returns its existing definition without inserting or re-fetching', async () => {
     const existingRows = [
       {
+        id: 'word-1',
         user_id: 'user-1',
         word: 'lucid',
         definition: 'clear and easy to understand',
@@ -152,5 +196,56 @@ describe('POST /api/words/lookup', () => {
     expect(mockFetchDefinition).not.toHaveBeenCalled();
     expect(supabase.words.insert).not.toHaveBeenCalled();
     expect(body).toEqual({ word: 'lucid', definition: 'clear and easy to understand' });
+  });
+
+  test('I4: a stored null definition (a past failed lookup) is retried and backfilled without touching SRS state', async () => {
+    const existingRows = [
+      {
+        id: 'word-1',
+        user_id: 'user-1',
+        word: 'zzzqaa',
+        definition: null,
+        repetitions: 4,
+        ease_factor: 2.9,
+        interval_days: 30,
+        last_rating: 'easy',
+      },
+    ];
+    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, existingRows });
+    mockCreateClient.mockResolvedValue(supabase);
+    mockFetchDefinition.mockResolvedValue('a definition at last');
+
+    const response = await POST(makeRequest({ word: 'zzzqaa' }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mockFetchDefinition).toHaveBeenCalledWith('zzzqaa');
+    expect(body).toEqual({ word: 'zzzqaa', definition: 'a definition at last' });
+    expect(supabase.words.insert).not.toHaveBeenCalled();
+
+    const storedRow = supabase.words.getTable().find((row: any) => row.id === 'word-1');
+    expect(storedRow).toMatchObject({
+      definition: 'a definition at last',
+      repetitions: 4,
+      ease_factor: 2.9,
+      interval_days: 30,
+      last_rating: 'easy',
+    });
+  });
+
+  test('I4: a stored null definition that still fails to resolve stays null and is not written', async () => {
+    const existingRows = [
+      { id: 'word-1', user_id: 'user-1', word: 'zzzqbb', definition: null },
+    ];
+    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, existingRows });
+    mockCreateClient.mockResolvedValue(supabase);
+    mockFetchDefinition.mockResolvedValue(null);
+
+    const response = await POST(makeRequest({ word: 'zzzqbb' }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ word: 'zzzqbb', definition: null });
+    expect(supabase.words.getUpdateCalls()).toHaveLength(0);
   });
 });
