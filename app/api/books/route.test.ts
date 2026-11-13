@@ -23,16 +23,22 @@ const mockCreateClient = createClient as unknown as ReturnType<typeof vi.fn>;
 const mockParseEpub = parseEpub as unknown as ReturnType<typeof vi.fn>;
 const mockAddBook = addBook as unknown as ReturnType<typeof vi.fn>;
 
-function makeSupabaseMock(user: { id: string } | null) {
+function makeSupabaseMock(
+  user: { id: string } | null,
+  uploadResult: { data?: unknown; error?: { message: string } | null } = {
+    data: { path: 'uploaded' },
+    error: null,
+  }
+) {
+  const upload = vi.fn().mockResolvedValue(uploadResult);
   return {
     auth: {
       getUser: vi.fn().mockResolvedValue({ data: { user }, error: null }),
     },
     storage: {
-      from: vi.fn(() => ({
-        upload: vi.fn().mockResolvedValue({ data: { path: 'uploaded' }, error: null }),
-      })),
+      from: vi.fn(() => ({ upload })),
     },
+    _upload: upload,
   };
 }
 
@@ -116,6 +122,87 @@ describe('POST /api/books', () => {
 
     expect(response.status).toBe(400);
     expect(body).toEqual({ error: 'Could not parse EPUB file' });
+    expect(mockAddBook).not.toHaveBeenCalled();
+    // Parsing happens before the Storage upload, so a failed parse never
+    // leaves an orphaned file behind in Storage.
+    expect(supabase._upload).not.toHaveBeenCalled();
+  });
+
+  test('uploads the EPUB to Storage only after a successful parse, and checks the upload error', async () => {
+    const supabase = makeSupabaseMock(
+      { id: 'user-1' },
+      { data: null, error: { message: 'bucket unavailable' } }
+    );
+    mockCreateClient.mockResolvedValue(supabase);
+    mockParseEpub.mockResolvedValue({ title: 'EPUB Title', author: 'EPUB Author', text: 'flattened text' });
+    mockAddBook.mockResolvedValue({ bookId: 'book-456' });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const formData = new FormData();
+    const file = new File(['fake epub bytes'], 'book.epub', { type: 'application/epub+zip' });
+    formData.set('file', file);
+
+    const response = await POST(makeRequest(formData));
+    const body = await response.json();
+
+    // A Storage upload failure is logged, not fatal: parsing already
+    // succeeded, so the request still completes successfully.
+    expect(response.status).toBe(201);
+    expect(body).toEqual({ bookId: 'book-456' });
+    expect(supabase._upload).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy).toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  test('a non-.epub file is rejected with 400 instead of being silently ignored', async () => {
+    const supabase = makeSupabaseMock({ id: 'user-1' });
+    mockCreateClient.mockResolvedValue(supabase);
+
+    const formData = new FormData();
+    const file = new File(['just some bytes'], 'notes.txt', { type: 'text/plain' });
+    formData.set('file', file);
+
+    const response = await POST(makeRequest(formData));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({ error: 'Uploaded file must be an .epub file' });
+    expect(mockParseEpub).not.toHaveBeenCalled();
+    expect(mockAddBook).not.toHaveBeenCalled();
+  });
+
+  test('an empty title in the text-paste path returns 400 instead of creating an empty book', async () => {
+    const supabase = makeSupabaseMock({ id: 'user-1' });
+    mockCreateClient.mockResolvedValue(supabase);
+
+    const formData = new FormData();
+    formData.set('title', '');
+    formData.set('format', 'text');
+    formData.set('rawText', 'some plain text content');
+
+    const response = await POST(makeRequest(formData));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({ error: 'title and rawText are required' });
+    expect(mockAddBook).not.toHaveBeenCalled();
+  });
+
+  test('an empty rawText in the text-paste path returns 400 instead of creating an empty book', async () => {
+    const supabase = makeSupabaseMock({ id: 'user-1' });
+    mockCreateClient.mockResolvedValue(supabase);
+
+    const formData = new FormData();
+    formData.set('title', 'My Book');
+    formData.set('format', 'text');
+    formData.set('rawText', '   ');
+
+    const response = await POST(makeRequest(formData));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({ error: 'title and rawText are required' });
     expect(mockAddBook).not.toHaveBeenCalled();
   });
 

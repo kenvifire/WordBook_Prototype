@@ -81,36 +81,62 @@ export async function addBook(
     const candidateWords = extractVocabulary(section.text);
     if (candidateWords.length === 0) continue;
 
+    // Select-first: find which candidate words already exist for this user so we
+    // never touch their stored definition/book_id (an upsert would overwrite both
+    // columns on an existing row, even when the new lookup fails or belongs to a
+    // different book) and so we only call the dictionary API for genuinely new words.
+    const { data: existingWords, error: existingWordsError } = await supabase
+      .from('words')
+      .select('id, word')
+      .eq('user_id', userId)
+      .in('word', candidateWords);
+
+    assertNoError(existingWordsError, 'Failed to look up existing words');
+
+    const existingWordIdByWord = new Map<string, string>();
+    for (const row of (existingWords ?? []) as { id: string; word: string }[]) {
+      existingWordIdByWord.set(row.word, row.id);
+    }
+
+    const newWords = candidateWords.filter((word) => !existingWordIdByWord.has(word));
+
     // fetchDefinition never rejects, but each call is wrapped defensively so one
     // word's dictionary failure can never abort the rest of the batch.
     const definitions = await Promise.all(
-      candidateWords.map((word) => fetchDefinition(word).catch(() => null))
+      newWords.map((word) => fetchDefinition(word).catch(() => null))
     );
 
-    const wordRows = candidateWords.map((word, index) => ({
+    const newWordRows = newWords.map((word, index) => ({
       user_id: userId,
       word,
       definition: definitions[index],
       book_id: bookId,
       // SM-2 columns (repetitions, ease_factor, interval_days, next_review_date) are
-      // intentionally omitted: on conflict (user_id, word) Supabase only overwrites
-      // the columns present in this payload, so an existing word's SRS state is left
-      // untouched. The table's own defaults apply only on a brand-new insert.
+      // intentionally omitted so the table's defaults apply; this is a plain insert
+      // of brand-new rows only, so there is no conflict and no risk of overwriting
+      // an existing word's SRS state, definition, or book_id.
     }));
 
-    const { data: upsertedWords, error: wordsError } = await supabase
-      .from('words')
-      .upsert(wordRows, { onConflict: 'user_id,word' })
-      .select('id, word');
+    let newWordIdByWord = new Map<string, string>();
+    if (newWordRows.length > 0) {
+      const { data: insertedWords, error: wordsError } = await supabase
+        .from('words')
+        .insert(newWordRows)
+        .select('id, word');
 
-    assertNoError(wordsError, 'Failed to upsert words');
-    if (!upsertedWords) {
-      throw new Error('Failed to upsert words: no rows returned');
+      assertNoError(wordsError, 'Failed to insert new words');
+      if (!insertedWords) {
+        throw new Error('Failed to insert new words: no rows returned');
+      }
+
+      newWordIdByWord = new Map(
+        (insertedWords as { id: string; word: string }[]).map((row) => [row.word, row.id])
+      );
     }
 
-    const sectionWordRows = (upsertedWords as { id: string; word: string }[]).map((row) => ({
+    const sectionWordRows = candidateWords.map((word) => ({
       section_id: sectionId,
-      word_id: row.id,
+      word_id: existingWordIdByWord.get(word) ?? newWordIdByWord.get(word),
     }));
 
     if (sectionWordRows.length === 0) continue;

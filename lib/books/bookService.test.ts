@@ -45,22 +45,46 @@ function makeSectionsBuilder() {
   return builder;
 }
 
-function makeWordsBuilder() {
-  let capturedRows: any[] = [];
-  let capturedOptions: any;
+// Simulates the `words` table: existing rows are seeded up front (as they'd
+// already be in the DB), `select().eq().in()` looks them up, and `insert()`
+// only ever creates genuinely new rows (seeded rows are never passed to insert
+// by production code, but we still refuse to "insert" a word already present,
+// to catch any regression back to upserting over existing rows).
+function makeWordsBuilder(existingRows: any[] = []) {
+  const table = [...existingRows];
+  let capturedInsertRows: any[] = [];
+  let capturedSelectFilter: { userId?: string; words?: string[] } = {};
+
   const builder: any = {};
-  builder.upsert = vi.fn((rows: any[], options: any) => {
-    capturedRows = rows;
-    capturedOptions = options;
+
+  builder.select = vi.fn(() => builder);
+  builder.eq = vi.fn((_column: string, value: string) => {
+    capturedSelectFilter.userId = value;
     return builder;
   });
-  builder.select = vi.fn(() => builder);
-  builder.then = (resolve: any, reject: any) =>
-    Promise.resolve({
-      data: capturedRows.map((row, index) => ({ id: `word-id-${index}`, word: row.word })),
-      error: null,
-    }).then(resolve, reject);
-  builder.getCapturedOptions = () => capturedOptions;
+  builder.in = vi.fn((_column: string, values: string[]) => {
+    capturedSelectFilter.words = values;
+    const data = table.filter(
+      (row) => row.user_id === capturedSelectFilter.userId && values.includes(row.word)
+    );
+    return Promise.resolve({ data, error: null });
+  });
+
+  builder.insert = vi.fn((rows: any[]) => {
+    capturedInsertRows = rows;
+    return builder;
+  });
+  builder.then = (resolve: any, reject: any) => {
+    const data = capturedInsertRows.map((row, index) => {
+      const newRow = { id: `word-id-${index}`, ...row };
+      table.push(newRow);
+      return { id: newRow.id, word: newRow.word };
+    });
+    return Promise.resolve({ data, error: null }).then(resolve, reject);
+  };
+
+  builder.getCapturedInsertRows = () => capturedInsertRows;
+  builder.getTable = () => table;
   return builder;
 }
 
@@ -71,10 +95,13 @@ function makeSectionWordsBuilder() {
   return builder;
 }
 
-function createSupabaseMock(booksResult: QueryResult = { data: { id: 'book-1' }, error: null }) {
+function createSupabaseMock(
+  booksResult: QueryResult = { data: { id: 'book-1' }, error: null },
+  existingWords: any[] = []
+) {
   const books = makeBooksBuilder(booksResult);
   const sections = makeSectionsBuilder();
-  const words = makeWordsBuilder();
+  const words = makeWordsBuilder(existingWords);
   const sectionWords = makeSectionWordsBuilder();
 
   const from = vi.fn((table: string) => {
@@ -129,7 +156,7 @@ describe('addBook', () => {
     expect(insertedSections[2]).toMatchObject({ section_number: 3, status: 'locked' });
   });
 
-  test('extracted words are upserted against the existing (user_id, word) row, not duplicated', async () => {
+  test('extracted words are inserted once and linked, not duplicated', async () => {
     const supabase = createSupabaseMock();
     const candidateWords = Array.from({ length: 150 }, (_, i) => uniqueWord(i));
     const rawText = candidateWords.join(' ');
@@ -141,9 +168,8 @@ describe('addBook', () => {
       userId: 'user-1',
     });
 
-    expect(supabase.words.upsert).toHaveBeenCalledTimes(1);
-    const [rows, options] = supabase.words.upsert.mock.calls[0];
-    expect(options).toEqual({ onConflict: 'user_id,word' });
+    expect(supabase.words.insert).toHaveBeenCalledTimes(1);
+    const rows = supabase.words.insert.mock.calls[0][0];
     expect(rows).toHaveLength(150);
     for (const row of rows) {
       expect(row).toMatchObject({ user_id: 'user-1', book_id: 'book-1' });
@@ -179,12 +205,82 @@ describe('addBook', () => {
       })
     ).resolves.toEqual({ bookId: 'book-1' });
 
-    expect(supabase.words.upsert).toHaveBeenCalledTimes(1);
-    const rows = supabase.words.upsert.mock.calls[0][0];
+    expect(supabase.words.insert).toHaveBeenCalledTimes(1);
+    const rows = supabase.words.insert.mock.calls[0][0];
     expect(rows).toHaveLength(5);
     const failedRow = rows.find((row: any) => row.word === word2);
     expect(failedRow.definition).toBeNull();
     const okRow = rows.find((row: any) => row.word === word0);
     expect(okRow.definition).toBe(`definition for ${word0}`);
+  });
+
+  test('re-extracting an existing word in a new book leaves its saved definition and book_id untouched', async () => {
+    // Regression test for the upsert data-loss bug: an existing word's
+    // definition/book_id must never be overwritten by a later book-add that
+    // happens to re-extract the same word, even if that later lookup fails or
+    // the word now also appears in a different book.
+    const existingWord = uniqueWord(0);
+    const newWord = uniqueWord(1);
+    const existingWords = [
+      {
+        id: 'existing-word-id',
+        user_id: 'user-1',
+        word: existingWord,
+        definition: 'the original good definition',
+        book_id: 'original-book-id',
+      },
+    ];
+    const supabase = createSupabaseMock(
+      { data: { id: 'book-2' }, error: null },
+      existingWords
+    );
+
+    // The dictionary lookup fails this time around; if the existing word were
+    // re-upserted, its good definition would get wiped out with null.
+    mockFetchDefinition.mockImplementation((word: string) => {
+      if (word === existingWord) {
+        return Promise.reject(new Error('dictionary API down'));
+      }
+      return Promise.resolve(`definition for ${word}`);
+    });
+
+    const rawText = [existingWord, newWord].join(' ');
+
+    const result = await addBook(supabase, {
+      title: 'Second Book',
+      format: 'text',
+      rawText,
+      userId: 'user-1',
+    });
+
+    expect(result).toEqual({ bookId: 'book-2' });
+
+    // Only the new word gets inserted; the existing word is never passed to insert.
+    expect(supabase.words.insert).toHaveBeenCalledTimes(1);
+    const insertedRows = supabase.words.insert.mock.calls[0][0];
+    expect(insertedRows).toHaveLength(1);
+    expect(insertedRows[0]).toMatchObject({ word: newWord });
+    expect(insertedRows.some((row: any) => row.word === existingWord)).toBe(false);
+
+    // fetchDefinition is never called for the already-existing word.
+    expect(mockFetchDefinition).not.toHaveBeenCalledWith(existingWord);
+
+    // The existing word's stored row is untouched: same definition, same book_id.
+    const storedExistingRow = supabase.words
+      .getTable()
+      .find((row: any) => row.word === existingWord);
+    expect(storedExistingRow).toMatchObject({
+      id: 'existing-word-id',
+      definition: 'the original good definition',
+      book_id: 'original-book-id',
+    });
+
+    // Both words are still linked into the new book's section.
+    expect(supabase.sectionWords.insert).toHaveBeenCalledTimes(1);
+    const sectionWordRows = supabase.sectionWords.insert.mock.calls[0][0];
+    expect(sectionWordRows).toHaveLength(2);
+    expect(sectionWordRows.map((row: any) => row.word_id).sort()).toEqual(
+      ['existing-word-id', 'word-id-0'].sort()
+    );
   });
 });
