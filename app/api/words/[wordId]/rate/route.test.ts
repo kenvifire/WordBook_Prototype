@@ -198,4 +198,66 @@ describe('POST /api/words/[wordId]/rate', () => {
     expect(response.status).toBe(401);
     expect(supabase.words.update).not.toHaveBeenCalled();
   });
+
+  test('rejects an invalid rating with 400 before touching the word', async () => {
+    const wordRow = {
+      id: 'word-1',
+      user_id: 'user-1',
+      word: 'ephemeral',
+      definition: 'lasting a short time',
+      book_id: 'book-1',
+      repetitions: 2,
+      ease_factor: 2.0,
+      interval_days: 10,
+      next_review_date: '2026-01-01',
+      last_rating: 'good',
+      created_at: '2026-01-01T00:00:00.000Z',
+    };
+    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, wordRow });
+    mockCreateClient.mockResolvedValue(supabase);
+
+    const response = await POST(makeRequest('word-1', { rating: 'excellent' }), {
+      params: Promise.resolve({ wordId: 'word-1' }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(supabase.words.update).not.toHaveBeenCalled();
+    expect(mockMaybeUnlockNextSection).not.toHaveBeenCalled();
+  });
+
+  test('still returns the successful word update when the unlock check throws', async () => {
+    const wordRow = {
+      id: 'word-1',
+      user_id: 'user-1',
+      word: 'ephemeral',
+      definition: 'lasting a short time',
+      book_id: 'book-1',
+      repetitions: 2,
+      ease_factor: 2.0,
+      interval_days: 10,
+      next_review_date: '2026-01-01',
+      last_rating: 'good',
+      created_at: '2026-01-01T00:00:00.000Z',
+    };
+    const supabase = makeSupabaseMock({
+      user: { id: 'user-1' },
+      wordRow,
+      sectionWords: [{ section_id: 'section-1', word_id: 'word-1' }],
+    });
+    mockCreateClient.mockResolvedValue(supabase);
+    mockMaybeUnlockNextSection.mockRejectedValue(new Error('boom'));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const response = await POST(makeRequest('word-1', { rating: 'good' }), {
+      params: Promise.resolve({ wordId: 'word-1' }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(supabase.words.update).toHaveBeenCalledTimes(1);
+    expect(body).toMatchObject({ id: 'word-1', repetitions: 3 });
+    expect(consoleErrorSpy).toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
+  });
 });

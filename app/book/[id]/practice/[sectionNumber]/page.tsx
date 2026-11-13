@@ -31,13 +31,20 @@ export default async function PracticePage({
 
   const { data: section } = await supabase
     .from('sections')
-    .select('id, section_number')
+    .select('id, section_number, status')
     .eq('book_id', id)
     .eq('section_number', Number(sectionNumber))
     .single();
 
   if (!section) {
     notFound();
+  }
+
+  // A locked section hasn't been reached yet — only a direct URL visit could
+  // land here. ready_to_practice/ready_to_read/completed are all still
+  // practiceable, since re-practicing a section is fine.
+  if (section.status === 'locked') {
+    redirect(`/book/${id}`);
   }
 
   const { data: sectionWordRows } = await supabase
@@ -47,16 +54,17 @@ export default async function PracticePage({
 
   const wordIds = ((sectionWordRows ?? []) as { word_id: string }[]).map((row) => row.word_id);
 
-  const today = new Date().toISOString().slice(0, 10);
-
+  // This page's job is "practice this section until it unlocks," not
+  // spaced-repetition scheduling — so it always shows every word in the
+  // section regardless of next_review_date. Due-date filtering belongs on
+  // the future global review page instead.
   let words: FlashcardWord[] = [];
   if (wordIds.length > 0) {
     const { data: wordRows } = await supabase
       .from('words')
       .select('id, word, definition')
       .in('id', wordIds)
-      .eq('user_id', user.id)
-      .lte('next_review_date', today);
+      .eq('user_id', user.id);
 
     words = (wordRows ?? []) as FlashcardWord[];
   }
