@@ -34,7 +34,11 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { rating } = (await request.json()) as { rating: Rating };
+  // M5: a malformed body (e.g. no body, or non-JSON) previously threw out of
+  // request.json() and surfaced as an uncaught 500, instead of the 400 a bad
+  // request should get — mirrors the guard the lookup route already has.
+  const body = (await request.json().catch(() => null)) as { rating?: Rating } | null;
+  const rating = body?.rating as Rating;
 
   if (!VALID_RATINGS.includes(rating)) {
     return NextResponse.json({ error: 'Invalid rating' }, { status: 400 });

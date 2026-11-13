@@ -225,6 +225,35 @@ describe('POST /api/words/[wordId]/rate', () => {
     expect(mockMaybeUnlockNextSection).not.toHaveBeenCalled();
   });
 
+  test('M5: a malformed (non-JSON) body returns 400 instead of a 500', async () => {
+    const wordRow = {
+      id: 'word-1',
+      user_id: 'user-1',
+      word: 'ephemeral',
+      definition: 'lasting a short time',
+      book_id: 'book-1',
+      repetitions: 2,
+      ease_factor: 2.0,
+      interval_days: 10,
+      next_review_date: '2026-01-01',
+      last_rating: 'good',
+      created_at: '2026-01-01T00:00:00.000Z',
+    };
+    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, wordRow });
+    mockCreateClient.mockResolvedValue(supabase);
+
+    const request = new NextRequest('http://localhost/api/words/word-1/rate', {
+      method: 'POST',
+      body: 'not valid json{{{',
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ wordId: 'word-1' }) });
+
+    expect(response.status).toBe(400);
+    expect(supabase.words.update).not.toHaveBeenCalled();
+    expect(mockMaybeUnlockNextSection).not.toHaveBeenCalled();
+  });
+
   test('still returns the successful word update when the unlock check throws', async () => {
     const wordRow = {
       id: 'word-1',

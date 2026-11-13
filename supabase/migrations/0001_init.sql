@@ -56,7 +56,8 @@ create policy "section_words via owned section" on section_words for all
   using (exists (select 1 from sections join books on books.id = sections.book_id
                  where sections.id = section_words.section_id and books.user_id = auth.uid()))
   with check (exists (select 1 from sections join books on books.id = sections.book_id
-                       where sections.id = section_words.section_id and books.user_id = auth.uid()));
+                       where sections.id = section_words.section_id and books.user_id = auth.uid())
+              and exists (select 1 from words where words.id = section_words.word_id and words.user_id = auth.uid()));
 
 insert into storage.buckets (id, name, public) values ('epubs', 'epubs', false)
 on conflict (id) do nothing;
