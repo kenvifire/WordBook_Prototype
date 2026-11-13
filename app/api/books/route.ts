@@ -1,15 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getStorage } from 'firebase-admin/storage';
+import { getAdminApp } from '@/lib/firebase/admin';
+import { getAuthedUser } from '@/lib/firebase/server';
 import { parseEpub } from '@/lib/epub/parseEpub';
 import { addBook } from '@/lib/books/bookService';
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthedUser();
 
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -48,14 +46,14 @@ export async function POST(request: NextRequest) {
 
     // Storage is for record-keeping only, not a hard dependency of success: the
     // book has already been parsed, so a storage failure here is logged, not fatal.
-    const { error: uploadError } = await supabase.storage
-      .from('epubs')
-      .upload(`${user.id}/${randomUUID()}.epub`, buffer, {
-        contentType: 'application/epub+zip',
-      });
-
-    if (uploadError) {
-      console.error('Failed to upload EPUB to storage:', uploadError.message);
+    try {
+      await getStorage(getAdminApp())
+        .bucket()
+        .file(`epubs/${user.uid}/${randomUUID()}.epub`)
+        .save(buffer, { contentType: 'application/epub+zip' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown storage error';
+      console.error('Failed to upload EPUB to storage:', message);
     }
   } else {
     format = 'text';
@@ -72,12 +70,12 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const { bookId } = await addBook(supabase, {
+  const { bookId } = await addBook({
     title,
     author,
     format,
     rawText,
-    userId: user.id,
+    userId: user.uid,
   });
 
   return NextResponse.json({ bookId }, { status: 201 });

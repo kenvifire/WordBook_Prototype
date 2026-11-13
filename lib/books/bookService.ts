@@ -1,4 +1,5 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getAdminApp } from '@/lib/firebase/admin';
 import { splitIntoSections } from '@/lib/text/sectionize';
 import { extractVocabulary } from '@/lib/text/extractVocabulary';
 import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
@@ -15,10 +16,25 @@ export type AddBookResult = {
   bookId: string;
 };
 
-function assertNoError(error: { message: string } | null, context: string): void {
-  if (error) {
-    throw new Error(`${context}: ${error.message}`);
-  }
+// The gRPC status code for ALREADY_EXISTS (google-gax's `Status.ALREADY_EXISTS`,
+// also `@google-cloud/firestore`'s internal `StatusCode.ALREADY_EXISTS`).
+//
+// Verified against the installed firebase-admin/@google-cloud/firestore
+// packages: a failed `DocumentReference.create()` rejects with a raw
+// `GoogleError` whose `.code` is this *number*, not a string like
+// 'already-exists'. (That string-code shape belongs to other Firebase Admin
+// surfaces — Auth, Functions, Remote Config, etc. — which wrap gRPC errors
+// into their own `FirebaseError` subclasses. The core Firestore client used
+// by `firebase-admin/firestore` does not do that wrapping; it surfaces the
+// gRPC error as-is.)
+const FIRESTORE_ALREADY_EXISTS_CODE = 6;
+
+function isAlreadyExistsError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === FIRESTORE_ALREADY_EXISTS_CODE
+  );
 }
 
 // I6: a section's new words were previously all looked up via one unbounded
@@ -52,127 +68,133 @@ async function fetchDefinitionsWithLimit(
   return results;
 }
 
-export async function addBook(
-  supabase: SupabaseClient,
-  input: AddBookInput
-): Promise<AddBookResult> {
+function todayDateString(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// SM-2 defaults for a brand-new word doc, matching lib/srs/sm2.ts's state
+// shape and the word-lookup route's insert defaults.
+function newWordDoc(params: {
+  userId: string;
+  word: string;
+  definition: string | null;
+}): Record<string, unknown> {
+  return {
+    userId: params.userId,
+    word: params.word,
+    definition: params.definition,
+    sectionRefs: [] as { bookId: string; sectionId: string }[],
+    repetitions: 0,
+    easeFactor: 2.5,
+    intervalDays: 1,
+    nextReviewDate: todayDateString(),
+    lastRating: null,
+  };
+}
+
+export async function addBook(input: AddBookInput): Promise<AddBookResult> {
   const { title, author, format, rawText, userId } = input;
+  const db = getFirestore(getAdminApp());
 
-  const { data: book, error: bookError } = await supabase
-    .from('books')
-    .insert({
-      user_id: userId,
-      title,
-      author: author ?? null,
-      format,
-      raw_text: rawText,
-    })
-    .select('id')
-    .single();
+  const bookRef = await db.collection('books').add({
+    userId,
+    title,
+    author: author ?? null,
+    format,
+    rawText,
+  });
+  const bookId = bookRef.id;
 
-  assertNoError(bookError, 'Failed to create book');
-  if (!book) {
-    throw new Error('Failed to create book: no row returned');
-  }
-
-  const bookId = book.id as string;
   const sections = splitIntoSections(rawText);
-
   if (sections.length === 0) {
     return { bookId };
   }
 
-  const { data: insertedSections, error: sectionsError } = await supabase
-    .from('sections')
-    .insert(
-      sections.map((section) => ({
-        book_id: bookId,
-        section_number: section.sectionNumber,
-        start_word_index: section.startWordIndex,
-        end_word_index: section.endWordIndex,
+  const sectionsCollection = bookRef.collection('sections');
+  const wordsCollection = db.collection('words');
+
+  // Create every section doc up front (order doesn't matter between them —
+  // each is addressed by its own auto-id afterward).
+  const sectionDocRefs = await Promise.all(
+    sections.map((section) =>
+      sectionsCollection.add({
+        sectionNumber: section.sectionNumber,
+        startWordIndex: section.startWordIndex,
+        endWordIndex: section.endWordIndex,
         status: section.sectionNumber === 1 ? 'ready_to_practice' : 'locked',
-      }))
+        wordIds: [] as string[],
+      })
     )
-    .select('id, section_number');
+  );
 
-  assertNoError(sectionsError, 'Failed to create sections');
-  if (!insertedSections) {
-    throw new Error('Failed to create sections: no rows returned');
-  }
-
-  const sectionIdByNumber = new Map<number, string>();
-  for (const row of insertedSections as { id: string; section_number: number }[]) {
-    sectionIdByNumber.set(row.section_number, row.id);
-  }
-
-  for (const section of sections) {
-    const sectionId = sectionIdByNumber.get(section.sectionNumber);
-    if (!sectionId) continue;
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i];
+    const sectionRef = sectionDocRefs[i];
+    const sectionId = sectionRef.id;
 
     const candidateWords = extractVocabulary(section.text);
     if (candidateWords.length === 0) continue;
 
-    // Select-first: find which candidate words already exist for this user so we
-    // never touch their stored definition/book_id (an upsert would overwrite both
-    // columns on an existing row, even when the new lookup fails or belongs to a
-    // different book) and so we only call the dictionary API for genuinely new words.
-    const { data: existingWords, error: existingWordsError } = await supabase
-      .from('words')
-      .select('id, word')
-      .eq('user_id', userId)
-      .in('word', candidateWords);
+    const wordIds = candidateWords.map((word) => `${userId}_${word}`);
 
-    assertNoError(existingWordsError, 'Failed to look up existing words');
+    // Select-first: a cheap get() per candidate (no write) tells us which
+    // words are genuinely new for this user. Only those get a
+    // fetchDefinition call and a .create() attempt — an already-existing
+    // word's definition/SM-2 state is never touched here, matching the
+    // Supabase build's "select-first, never upsert" rule.
+    const existenceSnapshots = await Promise.all(
+      wordIds.map((wordId) => wordsCollection.doc(wordId).get())
+    );
 
-    const existingWordIdByWord = new Map<string, string>();
-    for (const row of (existingWords ?? []) as { id: string; word: string }[]) {
-      existingWordIdByWord.set(row.word, row.id);
-    }
-
-    const newWords = candidateWords.filter((word) => !existingWordIdByWord.has(word));
-
-    const definitions = await fetchDefinitionsWithLimit(newWords);
-
-    const newWordRows = newWords.map((word, index) => ({
-      user_id: userId,
-      word,
-      definition: definitions[index],
-      book_id: bookId,
-      // SM-2 columns (repetitions, ease_factor, interval_days, next_review_date) are
-      // intentionally omitted so the table's defaults apply; this is a plain insert
-      // of brand-new rows only, so there is no conflict and no risk of overwriting
-      // an existing word's SRS state, definition, or book_id.
-    }));
-
-    let newWordIdByWord = new Map<string, string>();
-    if (newWordRows.length > 0) {
-      const { data: insertedWords, error: wordsError } = await supabase
-        .from('words')
-        .insert(newWordRows)
-        .select('id, word');
-
-      assertNoError(wordsError, 'Failed to insert new words');
-      if (!insertedWords) {
-        throw new Error('Failed to insert new words: no rows returned');
+    const newWordPositions: number[] = [];
+    for (let j = 0; j < existenceSnapshots.length; j++) {
+      if (!existenceSnapshots[j].exists) {
+        newWordPositions.push(j);
       }
-
-      newWordIdByWord = new Map(
-        (insertedWords as { id: string; word: string }[]).map((row) => [row.word, row.id])
-      );
     }
 
-    const sectionWordRows = candidateWords.map((word) => ({
-      section_id: sectionId,
-      word_id: existingWordIdByWord.get(word) ?? newWordIdByWord.get(word),
-    }));
+    const definitions = await fetchDefinitionsWithLimit(
+      newWordPositions.map((j) => candidateWords[j])
+    );
 
-    if (sectionWordRows.length === 0) continue;
+    await Promise.all(
+      newWordPositions.map(async (j, k) => {
+        const wordId = wordIds[j];
+        const word = candidateWords[j];
+        const definition = definitions[k];
+        try {
+          await wordsCollection
+            .doc(wordId)
+            .create(newWordDoc({ userId, word, definition }));
+        } catch (error) {
+          if (!isAlreadyExistsError(error)) {
+            throw error;
+          }
+          // Genuine race: another concurrent addBook call (this user
+          // re-extracting the same brand-new word from a different book,
+          // or a second request for this same book) won the create() for
+          // this deterministic id first. Nothing to do here — wordIds[j]
+          // is still the correct, usable id for the section/word linking
+          // below regardless of which caller's create() won.
+        }
+      })
+    );
 
-    const { error: sectionWordsError } = await supabase
-      .from('section_words')
-      .insert(sectionWordRows);
-
-    assertNoError(sectionWordsError, 'Failed to link section words');
+    // Batch-update: every candidate word (new or pre-existing) gets this
+    // section appended to its sectionRefs, and the section gets every
+    // candidate word id appended to its wordIds — written together so a
+    // crash between them can never leave one side of a word/section pair
+    // updated without the other.
+    const batch = db.batch();
+    batch.update(sectionRef, {
+      wordIds: FieldValue.arrayUnion(...wordIds),
+    });
+    for (const wordId of wordIds) {
+      batch.update(wordsCollection.doc(wordId), {
+        sectionRefs: FieldValue.arrayUnion({ bookId, sectionId }),
+      });
+    }
+    await batch.commit();
   }
 
   return { bookId };
