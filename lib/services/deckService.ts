@@ -57,7 +57,7 @@ export async function buildDeck(sectionId: string): Promise<{ sectionId: string;
 
   const candidates = extractCandidates(section.text);
   const known = getKnownWords();
-  const client = createOpenAIClient(process.env.OPENAI_API_KEY!, process.env.OPENAI_MODEL);
+  const client = createOpenAIClient(process.env.OPENAI_API_KEY!, process.env.OPENAI_MODEL, process.env.OPENAI_BASE_URL);
 
   const prioritized = await cacheUnlessFallback(
     `prioritize:${sectionId}`,

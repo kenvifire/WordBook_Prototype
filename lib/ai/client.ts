@@ -1,4 +1,4 @@
-const CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
+const DEFAULT_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 const DEFAULT_MODEL = 'gpt-4o-mini';
 
 export class AIClientError extends Error {}
@@ -7,10 +7,10 @@ export interface AIClient {
   complete(prompt: string): Promise<string>;
 }
 
-export function createOpenAIClient(apiKey: string, model?: string): AIClient {
+export function createOpenAIClient(apiKey: string, model?: string, baseUrl?: string): AIClient {
   return {
     async complete(prompt: string): Promise<string> {
-      const response = await fetch(CHAT_COMPLETIONS_URL, {
+      const response = await fetch(baseUrl ?? DEFAULT_CHAT_COMPLETIONS_URL, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,

@@ -19,3 +19,13 @@ test('complete throws AIClientError on a non-ok response', async () => {
   global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 429, text: async () => 'rate limited' });
   await expect(createOpenAIClient('key').complete('prompt')).rejects.toThrow(AIClientError);
 });
+
+test('complete posts to a custom base URL when one is provided (e.g. an OpenAI-compatible provider)', async () => {
+  global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: 'hola' } }] }) });
+  const client = createOpenAIClient('key', 'deepseek-chat', 'https://api.deepseek.com/chat/completions');
+  await expect(client.complete('prompt')).resolves.toBe('hola');
+  expect(fetch).toHaveBeenCalledWith(
+    'https://api.deepseek.com/chat/completions',
+    expect.objectContaining({ method: 'POST' }),
+  );
+});
