@@ -33,7 +33,7 @@ No paid or keyed third-party APIs are required to run this app.
    supabase db push
    ```
 
-   This creates the `books`, `sections`, `words`, and `section_words` tables along with their Row Level Security policies, and also expects an `epubs` Storage bucket to exist for uploaded EPUB files — create it from the Supabase dashboard's Storage section if the migration doesn't provision it for you.
+   This creates the `books`, `sections`, `words`, and `section_words` tables along with their Row Level Security policies, and also creates the `epubs` Storage bucket for uploaded EPUB files together with its storage policies. The migration is self-contained, so no manual bucket setup is needed.
 
 4. **Configure environment variables**
 
