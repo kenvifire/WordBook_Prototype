@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export type ParsedEpub = {
-  title: string;
+  title: string | null;
   author: string | null;
   text: string;
 };
@@ -32,12 +32,12 @@ export async function parseEpub(buffer: Buffer): Promise<ParsedEpub> {
     const text = chapterTexts.map(stripTags).join(' ').replace(/\s+/g, ' ').trim();
 
     return {
-      title: epub.metadata.title ?? '',
+      title: epub.metadata.title ?? null,
       author: epub.metadata.creator ?? null,
       text,
     };
-  } catch {
-    throw new Error('Could not parse EPUB file');
+  } catch (err) {
+    throw new Error('Could not parse EPUB file', { cause: err });
   } finally {
     await unlink(tempPath).catch(() => {});
   }
