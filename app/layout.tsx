@@ -1,12 +1,16 @@
 import type { Metadata } from 'next';
-import type { ReactNode } from 'react';
+import './globals.css';
 
 export const metadata: Metadata = {
   title: 'WordBook',
-  description: 'AI-assisted vocabulary-learning reader',
+  description: 'Learn vocabulary from the books you read.',
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
       <body>{children}</body>

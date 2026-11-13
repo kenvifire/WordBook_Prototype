@@ -7,9 +7,9 @@ node_modules
 # Local env files
 .env.local
 
-# Runtime data
-data/runtime/
-
 # TypeScript / Next.js generated files
 *.tsbuildinfo
 next-env.d.ts
+
+# Supabase CLI
+supabase/.temp
