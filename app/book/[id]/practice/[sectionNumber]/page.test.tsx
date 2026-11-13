@@ -5,6 +5,10 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(),
 }));
 
+vi.mock('@/lib/sections/sectionService', () => ({
+  maybeUnlockNextSection: vi.fn(),
+}));
+
 const { mockRedirect, mockNotFound } = vi.hoisted(() => ({
   mockRedirect: vi.fn((path: string) => {
     throw new Error(`NEXT_REDIRECT:${path}`);
@@ -20,9 +24,11 @@ vi.mock('next/navigation', () => ({
 }));
 
 import { createClient } from '@/lib/supabase/server';
+import { maybeUnlockNextSection } from '@/lib/sections/sectionService';
 import PracticePage from './page';
 
 const mockCreateClient = createClient as unknown as ReturnType<typeof vi.fn>;
+const mockMaybeUnlockNextSection = maybeUnlockNextSection as unknown as ReturnType<typeof vi.fn>;
 
 type Row = Record<string, unknown>;
 
@@ -43,7 +49,12 @@ function makeSingleRowBuilder(table: Row[]) {
   });
   builder.single = vi.fn(() => {
     const row = table.find((r) => Object.entries(filters).every(([col, val]) => r[col] === val));
-    return Promise.resolve({ data: row ?? null, error: row ? null : { message: 'no rows' } });
+    // Return a fresh shallow copy, not the live row reference: a real
+    // Supabase client hands back a brand-new object per query, so a later
+    // mutation to the stored row (e.g. simulating maybeUnlockNextSection's
+    // real update) must not retroactively change an earlier .single() result
+    // that the caller already destructured.
+    return Promise.resolve({ data: row ? { ...row } : null, error: row ? null : { message: 'no rows' } });
   });
   return builder;
 }
@@ -116,6 +127,8 @@ beforeEach(() => {
   mockRedirect.mockClear();
   mockNotFound.mockClear();
   mockCreateClient.mockReset();
+  mockMaybeUnlockNextSection.mockReset();
+  mockMaybeUnlockNextSection.mockResolvedValue(undefined);
 });
 
 describe('PracticePage', () => {
@@ -180,4 +193,74 @@ describe('PracticePage', () => {
       expect(mockRedirect).not.toHaveBeenCalled();
     }
   );
+
+  test('C1: a zero-vocabulary section runs the unlock check and redirects to the book page when it unlocks', async () => {
+    // `section` is the same object reference the mock's `sections` table
+    // stores, so mutating it inside maybeUnlockNextSection's mock
+    // implementation simulates the real unlock (locked -> ready_to_read)
+    // the way the production function would actually update the row.
+    const section = {
+      id: 'section-1',
+      book_id: 'book-1',
+      section_number: 1,
+      status: 'ready_to_practice',
+    };
+    const supabase = makeSupabaseMock({
+      user: { id: 'user-1' },
+      book: { id: 'book-1', user_id: 'user-1' },
+      section,
+      sectionWords: [],
+      words: [],
+    });
+    mockCreateClient.mockResolvedValue(supabase);
+    mockMaybeUnlockNextSection.mockImplementation(async () => {
+      section.status = 'ready_to_read';
+    });
+
+    await expect(
+      PracticePage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) })
+    ).rejects.toThrow('NEXT_REDIRECT:/book/book-1');
+
+    expect(mockMaybeUnlockNextSection).toHaveBeenCalledWith(supabase, 'section-1');
+    expect(mockRedirect).toHaveBeenCalledWith('/book/book-1');
+  });
+
+  test('C1: a zero-vocabulary section that does not unlock (unlock check is a no-op) renders normally', async () => {
+    const section = {
+      id: 'section-1',
+      book_id: 'book-1',
+      section_number: 1,
+      status: 'ready_to_read',
+    };
+    const supabase = makeSupabaseMock({
+      user: { id: 'user-1' },
+      book: { id: 'book-1', user_id: 'user-1' },
+      section,
+      sectionWords: [],
+      words: [],
+    });
+    mockCreateClient.mockResolvedValue(supabase);
+    // Default mock: resolves without mutating the section (status was
+    // already past ready_to_practice, so the real function wouldn't change it).
+
+    await PracticePage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+
+    expect(mockMaybeUnlockNextSection).toHaveBeenCalledWith(supabase, 'section-1');
+    expect(mockRedirect).not.toHaveBeenCalled();
+  });
+
+  test('a section with words never calls the unlock check (only the rate route does)', async () => {
+    const supabase = makeSupabaseMock({
+      user: { id: 'user-1' },
+      book: { id: 'book-1', user_id: 'user-1' },
+      section: { id: 'section-1', book_id: 'book-1', section_number: 1, status: 'ready_to_practice' },
+      sectionWords: [{ section_id: 'section-1', word_id: 'word-1' }],
+      words: [{ id: 'word-1', word: 'ephemeral', definition: 'lasting a short time' }],
+    });
+    mockCreateClient.mockResolvedValue(supabase);
+
+    await PracticePage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+
+    expect(mockMaybeUnlockNextSection).not.toHaveBeenCalled();
+  });
 });

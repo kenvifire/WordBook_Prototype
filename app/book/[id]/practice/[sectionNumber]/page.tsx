@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import PracticeSession from '@/components/PracticeSession';
 import type { FlashcardWord } from '@/components/Flashcard';
+import { maybeUnlockNextSection } from '@/lib/sections/sectionService';
 
 export default async function PracticePage({
   params,
@@ -53,6 +54,26 @@ export default async function PracticePage({
     .eq('section_id', section.id);
 
   const wordIds = ((sectionWordRows ?? []) as { word_id: string }[]).map((row) => row.word_id);
+
+  // C1: a section with zero vocabulary words (e.g. a short all-common tail
+  // like "The End.") has nothing to rate, so the rate route's unlock check
+  // — the only other place maybeUnlockNextSection is called — never fires
+  // for it, and the book gets stuck here forever. Run the check here
+  // instead, then re-check this section's status: if it just unlocked,
+  // there's nothing to practice, so send the learner back to the book page.
+  if (wordIds.length === 0) {
+    await maybeUnlockNextSection(supabase, section.id);
+
+    const { data: refreshedSection } = await supabase
+      .from('sections')
+      .select('status')
+      .eq('id', section.id)
+      .single();
+
+    if (refreshedSection && refreshedSection.status !== section.status) {
+      redirect(`/book/${id}`);
+    }
+  }
 
   // This page's job is "practice this section until it unlocks," not
   // spaced-repetition scheduling — so it always shows every word in the

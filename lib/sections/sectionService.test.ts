@@ -228,6 +228,33 @@ describe('maybeUnlockNextSection', () => {
     expect(rows.find((r: any) => r.id === 'section-2').status).toBe('ready_to_practice');
   });
 
+  test('I1: does nothing for a locked section even if its words are already >=80% recognized globally', async () => {
+    const supabase = createSupabaseMock({
+      sections: [
+        { id: 'section-1', book_id: 'book-1', section_number: 1, status: 'locked' },
+        { id: 'section-2', book_id: 'book-1', section_number: 2, status: 'locked' },
+      ],
+      sectionWords: [
+        { section_id: 'section-1', word_id: 'w1' },
+        { section_id: 'section-1', word_id: 'w2' },
+      ],
+      words: [
+        // Both words already mastered globally (e.g. recognized in another
+        // book), so the rate is 100% — but this section is locked, so it
+        // must not be allowed to skip straight to ready_to_read.
+        { id: 'w1', last_rating: 'good' },
+        { id: 'w2', last_rating: 'easy' },
+      ],
+    });
+
+    await maybeUnlockNextSection(supabase, 'section-1');
+
+    expect(supabase.sections.update).not.toHaveBeenCalled();
+    const rows = supabase.sections.getTable();
+    expect(rows.find((r: any) => r.id === 'section-1').status).toBe('locked');
+    expect(rows.find((r: any) => r.id === 'section-2').status).toBe('locked');
+  });
+
   test('does not touch the next section when there is no next section', async () => {
     const supabase = createSupabaseMock({
       sections: [

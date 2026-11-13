@@ -75,6 +75,16 @@ export async function maybeUnlockNextSection(
     wordRows = (data ?? []) as { last_rating: string | null }[];
   }
 
+  // I1: a `locked` section hasn't been reached by the learner yet (it isn't
+  // even practiceable), so it must never jump straight to `ready_to_read`
+  // just because the rated word's recognition rate happens to already be
+  // >=80% globally (e.g. the same word is already mastered in another book).
+  // Only a section the learner is actively practicing (`ready_to_practice`)
+  // is eligible to advance.
+  if (status === 'locked') {
+    return;
+  }
+
   const rate = computeRecognitionRate(wordRows.map((row) => ({ lastRating: row.last_rating })));
 
   if (rate < UNLOCK_THRESHOLD) {
