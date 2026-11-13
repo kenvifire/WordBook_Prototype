@@ -90,6 +90,44 @@ describe('PracticeSession', () => {
     expect(screen.queryByText('lucid')).not.toBeInTheDocument();
   });
 
+  test('I7: rapid double-click on a rating only sends one POST and only advances once', async () => {
+    const fetchControl: { resolve: ((value: { ok: boolean }) => void) | null } = {
+      resolve: null,
+    };
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<{ ok: boolean }>((resolve) => {
+          fetchControl.resolve = resolve;
+        })
+    );
+    const user = userEvent.setup();
+
+    render(
+      <PracticeSession
+        words={words}
+        doneMessage="Done — check back on the book page."
+        doneHref="/book/book-1"
+        doneLinkLabel="Back to book"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Show definition' }));
+    const goodButton = screen.getByRole('button', { name: 'Good' });
+
+    // Two rapid clicks while the first POST is still in flight (unresolved).
+    await user.click(goodButton);
+    await user.click(goodButton);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(goodButton).toBeDisabled();
+
+    fetchControl.resolve?.({ ok: true });
+    await screen.findByText('2 / 2');
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('lucid')).toBeInTheDocument();
+  });
+
   test('a network error on the rating POST shows an error and does not advance', async () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network down'));
     const user = userEvent.setup();

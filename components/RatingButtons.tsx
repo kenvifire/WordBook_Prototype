@@ -9,7 +9,13 @@ const RATINGS: { value: Rating; label: string }[] = [
   { value: 'easy', label: 'Easy' },
 ];
 
-export default function RatingButtons({ onRate }: { onRate: (rating: Rating) => void }) {
+export default function RatingButtons({
+  onRate,
+  disabled = false,
+}: {
+  onRate: (rating: Rating) => void;
+  disabled?: boolean;
+}) {
   return (
     <div role="group" aria-label="Rate your recall" className="flex gap-2">
       {RATINGS.map(({ value, label }) => (
@@ -17,7 +23,8 @@ export default function RatingButtons({ onRate }: { onRate: (rating: Rating) => 
           key={value}
           type="button"
           onClick={() => onRate(value)}
-          className="rounded border px-3 py-1 text-sm"
+          disabled={disabled}
+          className="rounded border px-3 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
         >
           {label}
         </button>

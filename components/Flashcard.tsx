@@ -14,9 +14,11 @@ export type FlashcardWord = {
 export default function Flashcard({
   word,
   onRate,
+  submitting = false,
 }: {
   word: FlashcardWord;
   onRate: (rating: Rating) => void;
+  submitting?: boolean;
 }) {
   const [revealed, setRevealed] = useState(false);
 
@@ -30,7 +32,7 @@ export default function Flashcard({
       {revealed ? (
         <>
           <p className="text-gray-700">{word.definition ?? 'No definition available.'}</p>
-          <RatingButtons onRate={onRate} />
+          <RatingButtons onRate={onRate} disabled={submitting} />
         </>
       ) : (
         <button

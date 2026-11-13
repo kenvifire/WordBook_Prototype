@@ -28,4 +28,12 @@ describe('RatingButtons', () => {
 
     expect(onRate).toHaveBeenCalledWith(value);
   });
+
+  test('I7: disabled=true disables every rating button', () => {
+    render(<RatingButtons onRate={vi.fn()} disabled />);
+
+    for (const label of ['Again', 'Hard', 'Good', 'Easy']) {
+      expect(screen.getByRole('button', { name: label })).toBeDisabled();
+    }
+  });
 });
