@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
@@ -64,6 +65,31 @@ export default async function ReadPage({
     redirect(`/book/${id}`);
   }
 
+  // I3: simple prev/next navigation. Previous always exists once section 1
+  // is passed (just link back one section number). Next only gets a link
+  // when the next section has progressed at least to ready_to_practice —
+  // i.e. it's reachable by some page — pointing at its practice page or its
+  // read page depending on how far it's gotten.
+  const previousSectionNumber =
+    typedSection.section_number > 1 ? typedSection.section_number - 1 : null;
+
+  const { data: nextSection } = await supabase
+    .from('sections')
+    .select('section_number, status')
+    .eq('book_id', id)
+    .eq('section_number', typedSection.section_number + 1)
+    .maybeSingle();
+
+  let nextSectionHref: string | null = null;
+  if (nextSection) {
+    const nextStatus = (nextSection as { status: string }).status;
+    if (nextStatus === 'ready_to_practice') {
+      nextSectionHref = `/book/${id}/practice/${typedSection.section_number + 1}`;
+    } else if (nextStatus === 'ready_to_read' || nextStatus === 'completed') {
+      nextSectionHref = `/book/${id}/read/${typedSection.section_number + 1}`;
+    }
+  }
+
   // Sections store word-index offsets into the book's raw text rather than
   // their own copy of the text (same tokenization as splitIntoSections), so
   // the section's text is recomputed here the same way it was at ingestion.
@@ -112,6 +138,31 @@ export default async function ReadPage({
           Mark section complete
         </button>
       </form>
+
+      <nav className="flex items-center justify-between border-t pt-4 text-sm">
+        {previousSectionNumber ? (
+          <Link
+            href={`/book/${id}/read/${previousSectionNumber}`}
+            className="font-medium underline"
+          >
+            ← Previous section
+          </Link>
+        ) : (
+          <span />
+        )}
+
+        <Link href={`/book/${id}`} className="font-medium underline">
+          Back to book
+        </Link>
+
+        {nextSectionHref ? (
+          <Link href={nextSectionHref} className="font-medium underline">
+            Next section →
+          </Link>
+        ) : (
+          <span />
+        )}
+      </nav>
     </main>
   );
 }
