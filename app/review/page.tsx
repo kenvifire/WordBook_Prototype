@@ -17,11 +17,18 @@ export default async function ReviewPage() {
   // lines up with what gets written back after a rating.
   const today = new Date().toISOString().slice(0, 10);
 
+  // I9: without this, every word gets `next_review_date = current_date`
+  // when first created (including every extraction-time word in a
+  // just-added book, most of which are still in locked sections), so they'd
+  // all show up here as "due" despite never having been practiced once.
+  // Excluding never-rated words keeps this page to words the learner has
+  // actually seen before.
   const { data: wordRows } = await supabase
     .from('words')
     .select('id, word, definition')
     .eq('user_id', user.id)
     .lte('next_review_date', today)
+    .not('last_rating', 'is', null)
     .order('next_review_date', { ascending: true });
 
   const words = (wordRows ?? []) as FlashcardWord[];
