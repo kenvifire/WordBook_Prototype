@@ -2,7 +2,7 @@
 // EPUB parsing uses zlib/zip decompression under the hood, which misbehaves under
 // jsdom (the project's default test environment) — run this file in a plain node
 // environment instead.
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseEpub } from './parseEpub';
@@ -17,5 +17,27 @@ describe('parseEpub', () => {
 
   test('rejects on a non-EPUB buffer instead of hanging or crashing the process', async () => {
     await expect(parseEpub(Buffer.from('not an epub'))).rejects.toThrow();
+  });
+
+  test('falls back to a non-null placeholder title when EPUB metadata has none', async () => {
+    vi.resetModules();
+    vi.doMock('epub2', () => ({
+      EPub: {
+        createAsync: vi.fn().mockResolvedValue({
+          metadata: { title: undefined, creator: undefined },
+          flow: [],
+        }),
+      },
+    }));
+
+    const { parseEpub: parseEpubWithMock } = await import('./parseEpub');
+    const result = await parseEpubWithMock(Buffer.from('irrelevant'));
+
+    expect(result.title).toBe('Untitled');
+    expect(result.title).not.toBeNull();
+    expect(result.author).toBeNull();
+
+    vi.doUnmock('epub2');
+    vi.resetModules();
   });
 });

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export type ParsedEpub = {
-  title: string | null;
+  title: string;
   author: string | null;
   text: string;
 };
@@ -32,7 +32,7 @@ export async function parseEpub(buffer: Buffer): Promise<ParsedEpub> {
     const text = chapterTexts.map(stripTags).join(' ').replace(/\s+/g, ' ').trim();
 
     return {
-      title: epub.metadata.title ?? null,
+      title: epub.metadata.title ?? 'Untitled',
       author: epub.metadata.creator ?? null,
       text,
     };
