@@ -41,12 +41,11 @@ No paid or keyed third-party APIs are required to run this app.
    cp .env.local.example .env.local
    ```
 
-   Fill in the three values from your Supabase project's API settings:
+   Fill in the two values from your Supabase project's API settings:
 
    ```
    NEXT_PUBLIC_SUPABASE_URL=
    NEXT_PUBLIC_SUPABASE_ANON_KEY=
-   SUPABASE_SERVICE_ROLE_KEY=
    ```
 
 5. **Run the app**
@@ -96,11 +95,21 @@ The spec left some implementation details open; these decisions were made while 
 7. **Recognition rating is global per word, not per book/section.** A word's `last_rating` is shared across every book it appears in, so mastering it in one book counts immediately toward another book's section unlock — matching the spec's own one-row-per-`(user_id, word)` schema.
 8. **The old local-JSON/OpenAI/MyMemory prototype was deleted outright** (`app/`, `components/`, `lib/`, `scripts/`, `data/` from the prior version) rather than migrated; `docs/business-tech-note.md` and `docs/runbook.md` are left untouched as historical record of that retired version.
 
+### RLS verification status
+
+Row Level Security (ruling 2 above) has only been **verified by code review**, not by an executed test. The policies in `supabase/migrations/0001_init.sql` have been read carefully and appear correct — every table the app queries is covered, scoped to `auth.uid()`, and the app adds its own `user_id` filters as a second layer — but no automated test has run against a live Supabase project with two different users to confirm one is actually denied access to the other's rows. Before relying on this in production, run Supabase's local test suite with two users:
+
+```bash
+supabase test db
+```
+
+(Writing that test suite is out of scope for the current build — the project's Global Constraints rule out a live Supabase project during implementation, so it could not have been executed here either.)
+
 ### Known backlog / rough edges
 
 Accumulated during implementation, not yet addressed:
 
 - **No transaction/rollback across the multi-step book-add flow.** Adding a book inserts the book row, then its sections, words, and `section_words` rows in separate steps; a failure partway through can leave a partially-created book rather than rolling back atomically.
 - **Dictionary lookups scale linearly with book length.** Each unique non-common word triggers its own lookup to `api.dictionaryapi.dev`; a very long book could be slow enough to risk a request timeout during the add-book flow.
-- **No DB-level race guard on rapid double-taps of a brand-new word in the reader.** Tapping a word that doesn't yet have a `words` row twice in quick succession could race to insert it twice rather than being guarded by a unique constraint or upsert.
+- **A rare double-tap race on a brand-new word in the reader shows an error, but can't corrupt data.** Tapping the same popup twice is already blocked by its `loading` flag; the only remaining race is two *different* popups for the same not-yet-stored word tapped in quick succession. The `unique(user_id, word)` constraint on `words` prevents any duplicate row or data corruption — the loser of the race just gets a 500 and sees "Could not look up this word." instead of the word it's actually displaying.
 - **`commonWords.json` is an unfiltered word-frequency list.** It's sourced directly from a frequency list, not curated for a "common words" filter, so it contains a few words some would consider inappropriate to have in that context.
