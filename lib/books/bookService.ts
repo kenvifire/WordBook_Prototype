@@ -21,6 +21,37 @@ function assertNoError(error: { message: string } | null, context: string): void
   }
 }
 
+// I6: a section's new words were previously all looked up via one unbounded
+// Promise.all, so a long section could fire thousands of simultaneous
+// dictionary requests. This runs at most `limit` fetchDefinition calls
+// concurrently via a small worker-pool loop, preserving each word's result
+// at its original index.
+const DICTIONARY_CONCURRENCY = 5;
+
+async function fetchDefinitionsWithLimit(
+  words: string[],
+  limit: number = DICTIONARY_CONCURRENCY
+): Promise<(string | null)[]> {
+  const results: (string | null)[] = new Array(words.length).fill(null);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= words.length) return;
+      // fetchDefinition never rejects, but each call is still wrapped
+      // defensively so one word's dictionary failure can never abort the
+      // rest of the batch.
+      results[index] = await fetchDefinition(words[index]).catch(() => null);
+    }
+  }
+
+  const workerCount = Math.min(limit, words.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
 export async function addBook(
   supabase: SupabaseClient,
   input: AddBookInput
@@ -100,11 +131,7 @@ export async function addBook(
 
     const newWords = candidateWords.filter((word) => !existingWordIdByWord.has(word));
 
-    // fetchDefinition never rejects, but each call is wrapped defensively so one
-    // word's dictionary failure can never abort the rest of the batch.
-    const definitions = await Promise.all(
-      newWords.map((word) => fetchDefinition(word).catch(() => null))
-    );
+    const definitions = await fetchDefinitionsWithLimit(newWords);
 
     const newWordRows = newWords.map((word, index) => ({
       user_id: userId,

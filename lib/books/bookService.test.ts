@@ -283,4 +283,57 @@ describe('addBook', () => {
       ['existing-word-id', 'word-id-0'].sort()
     );
   });
+
+  test('I6: caps concurrent dictionary lookups at 5 instead of firing a section\'s lookups all at once', async () => {
+    const supabase = createSupabaseMock();
+    const candidateWords = Array.from({ length: 12 }, (_, i) => uniqueWord(i));
+    const rawText = candidateWords.join(' ');
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const pendingResolvers: Array<() => void> = [];
+
+    mockFetchDefinition.mockImplementation((word: string) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      return new Promise<string>((resolve) => {
+        pendingResolvers.push(() => {
+          inFlight -= 1;
+          resolve(`definition for ${word}`);
+        });
+      });
+    });
+
+    async function flush(times = 10) {
+      for (let i = 0; i < times; i++) {
+        await Promise.resolve();
+      }
+    }
+
+    const addPromise = addBook(supabase, {
+      title: 'Big Vocab Book',
+      format: 'text',
+      rawText,
+      userId: 'user-1',
+    });
+
+    // Resolve lookups one at a time, flushing microtasks in between so the
+    // next worker in the pool (if any word is left) gets to start before we
+    // check the high-water mark again.
+    let resolvedCount = 0;
+    for (let guard = 0; guard < candidateWords.length * 2 && resolvedCount < candidateWords.length; guard++) {
+      await flush();
+      const resolve = pendingResolvers.shift();
+      if (!resolve) continue;
+      resolve();
+      resolvedCount += 1;
+    }
+
+    await flush();
+    await addPromise;
+
+    expect(mockFetchDefinition).toHaveBeenCalledTimes(12);
+    expect(maxInFlight).toBeGreaterThan(0);
+    expect(maxInFlight).toBeLessThanOrEqual(5);
+  });
 });
