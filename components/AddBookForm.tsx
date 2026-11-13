@@ -5,8 +5,17 @@ import { useRouter } from 'next/navigation';
 
 type Mode = 'text' | 'file';
 
-function formatForFile(file: File): 'text' | 'epub' {
-  return file.name.toLowerCase().endsWith('.epub') ? 'epub' : 'text';
+function isEpubFile(file: File): boolean {
+  return file.name.toLowerCase().endsWith('.epub');
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
+    reader.readAsText(file);
+  });
 }
 
 export default function AddBookForm() {
@@ -25,16 +34,21 @@ export default function AddBookForm() {
     const formData = new FormData();
     formData.append('title', title);
 
-    if (mode === 'file' && file) {
-      formData.append('format', formatForFile(file));
-      formData.append('file', file);
-    } else {
-      formData.append('format', 'text');
-      formData.append('rawText', rawText);
-    }
-
     setSubmitting(true);
     try {
+      if (mode === 'file' && file) {
+        if (isEpubFile(file)) {
+          formData.append('format', 'epub');
+          formData.append('file', file);
+        } else {
+          formData.append('format', 'text');
+          formData.append('rawText', await readFileAsText(file));
+        }
+      } else {
+        formData.append('format', 'text');
+        formData.append('rawText', rawText);
+      }
+
       const res = await fetch('/api/books', { method: 'POST', body: formData });
       let data: { error?: string } = {};
       try {

@@ -1,5 +1,5 @@
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const mockRefresh = vi.fn();
@@ -19,10 +19,6 @@ beforeEach(() => {
   mockRefresh.mockReset();
   mockPush.mockReset();
   global.fetch = vi.fn();
-});
-
-afterEach(() => {
-  cleanup();
 });
 
 describe('AddBookForm', () => {
@@ -51,7 +47,7 @@ describe('AddBookForm', () => {
     await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1));
   });
 
-  test('choosing a file switches the form to upload mode and posts format based on file extension', async () => {
+  test('choosing an .epub file switches the form to upload mode and posts format=epub with a file field', async () => {
     mockFetchOnce({ ok: true, json: async () => ({ bookId: 'book-2' }) });
 
     const user = userEvent.setup();
@@ -72,16 +68,27 @@ describe('AddBookForm', () => {
     expect(body1.get('format')).toBe('epub');
     expect(body1.get('file')).toBeInstanceOf(File);
     expect(body1.get('rawText')).toBeNull();
+  });
 
+  test('choosing a .txt file reads its contents client-side and posts format=text with rawText (no file field)', async () => {
     mockFetchOnce({ ok: true, json: async () => ({ bookId: 'book-3' }) });
+
+    const user = userEvent.setup();
+    render(<AddBookForm />);
+
+    await user.click(screen.getByRole('button', { name: /upload file/i }));
+    await user.type(screen.getByLabelText(/title/i), 'Text Book');
+
     const txtFile = new File(['text contents'], 'book.txt', { type: 'text/plain' });
+    const fileInput = screen.getByLabelText(/^file$/i);
     await user.upload(fileInput, txtFile);
     await user.click(screen.getByRole('button', { name: /add book/i }));
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
-    const body2 = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body as FormData;
-    expect(body2.get('format')).toBe('text');
-    expect(body2.get('file')).toBeInstanceOf(File);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    const body = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as FormData;
+    expect(body.get('format')).toBe('text');
+    expect(body.get('rawText')).toBe('text contents');
+    expect(body.get('file')).toBeNull();
   });
 
   test('shows the API error message when the POST fails', async () => {
