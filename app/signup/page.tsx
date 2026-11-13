@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/client';
+import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
+import { getFirebaseClientApp } from '@/lib/firebase/client';
 
 export default function SignupPage() {
   const router = useRouter();
@@ -17,17 +18,27 @@ export default function SignupPage() {
     setError(null);
     setSubmitting(true);
 
-    const supabase = createClient();
-    const { error } = await supabase.auth.signUp({ email, password });
+    try {
+      const auth = getAuth(getFirebaseClientApp());
+      const credential = await createUserWithEmailAndPassword(auth, email, password);
+      const idToken = await credential.user.getIdToken();
 
-    setSubmitting(false);
+      const response = await fetch('/api/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      });
 
-    if (error) {
-      setError(error.message);
-      return;
+      if (!response.ok) {
+        throw new Error('Failed to establish session');
+      }
+
+      router.push('/library');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sign up');
+    } finally {
+      setSubmitting(false);
     }
-
-    router.push('/library');
   }
 
   return (
