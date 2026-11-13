@@ -15,6 +15,31 @@ function stripTags(html: string): string {
   return html.replace(/<[^>]+>/g, ' ');
 }
 
+// EPUB chapter HTML commonly contains named entities instead of the literal
+// character (curly quotes, non-breaking spaces, dashes). Left undecoded,
+// these leak into the reader as literal "&nbsp;" text and into
+// extractVocabulary's tokenizer as junk words ("nbsp", "rsquo", "mdash").
+// Not a full HTML-entity library — just the handful that show up in real
+// book text.
+const HTML_ENTITIES: Record<string, string> = {
+  '&nbsp;': ' ',
+  '&mdash;': '—',
+  '&ndash;': '–',
+  '&rsquo;': '’',
+  '&lsquo;': '‘',
+  '&rdquo;': '”',
+  '&ldquo;': '“',
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&#39;': "'",
+  '&quot;': '"',
+};
+
+function decodeEntities(html: string): string {
+  return html.replace(/&[a-zA-Z#0-9]+;/g, (entity) => HTML_ENTITIES[entity] ?? entity);
+}
+
 export async function parseEpub(buffer: Buffer): Promise<ParsedEpub> {
   const tempPath = join(tmpdir(), `wordbook-upload-${randomUUID()}.epub`);
   await writeFile(tempPath, buffer);
@@ -29,7 +54,12 @@ export async function parseEpub(buffer: Buffer): Promise<ParsedEpub> {
       })
     );
 
-    const text = chapterTexts.map(stripTags).join(' ').replace(/\s+/g, ' ').trim();
+    const text = chapterTexts
+      .map(stripTags)
+      .map(decodeEntities)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
 
     return {
       title: epub.metadata.title ?? 'Untitled',

@@ -6,6 +6,7 @@ import { describe, test, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseEpub } from './parseEpub';
+import { extractVocabulary } from '../text/extractVocabulary';
 
 describe('parseEpub', () => {
   test('parses a valid EPUB into title, author, and flattened chapter text', async () => {
@@ -36,6 +37,44 @@ describe('parseEpub', () => {
     expect(result.title).toBe('Untitled');
     expect(result.title).not.toBeNull();
     expect(result.author).toBeNull();
+
+    vi.doUnmock('epub2');
+    vi.resetModules();
+  });
+
+  test('I2: decodes HTML entities so they do not leak literally into the text or as junk vocabulary', async () => {
+    vi.resetModules();
+    vi.doMock('epub2', () => ({
+      EPub: {
+        createAsync: vi.fn().mockResolvedValue({
+          metadata: { title: 'Entities Test', creator: 'Author' },
+          flow: [{ id: 'ch1' }],
+          getChapterAsync: vi
+            .fn()
+            .mockResolvedValue(
+              '<p>Alchemist&nbsp;&mdash;it&rsquo;s a &ldquo;grove&rdquo; &amp; garden.</p>'
+            ),
+        }),
+      },
+    }));
+
+    const { parseEpub: parseEpubWithMock } = await import('./parseEpub');
+    const result = await parseEpubWithMock(Buffer.from('irrelevant'));
+
+    expect(result.text).not.toContain('&nbsp;');
+    expect(result.text).not.toContain('&mdash;');
+    expect(result.text).not.toContain('&rsquo;');
+    expect(result.text).not.toContain('&ldquo;');
+    expect(result.text).not.toContain('&rdquo;');
+    expect(result.text).not.toContain('&amp;');
+
+    const vocabulary = extractVocabulary(result.text);
+    expect(vocabulary).not.toContain('nbsp');
+    expect(vocabulary).not.toContain('mdash');
+    expect(vocabulary).not.toContain('rsquo');
+    expect(vocabulary).not.toContain('ldquo');
+    expect(vocabulary).not.toContain('rdquo');
+    expect(vocabulary).not.toContain('amp');
 
     vi.doUnmock('epub2');
     vi.resetModules();

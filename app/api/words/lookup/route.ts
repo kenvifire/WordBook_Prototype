@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
-
-// Matches the same tokenization rule as extractVocabulary (lib/text/extractVocabulary.ts)
-// so a tap-to-define lookup on, say, "Hello," in the reader resolves to the same
-// `word` row ("hello") that section ingestion may have already created/linked.
-function normalizeWord(raw: string): string {
-  const match = raw.match(/[a-zA-Z']+/);
-  return match ? match[0].toLowerCase() : '';
-}
+import { normalizeWord } from '@/lib/text/normalizeWord';
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
