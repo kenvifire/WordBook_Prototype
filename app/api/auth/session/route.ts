@@ -31,7 +31,10 @@ export async function POST(request: NextRequest) {
 
     (await cookies()).set('session', sessionCookie, {
       httpOnly: true,
-      secure: true,
+      // Safari (unlike Chrome/Firefox) has historically rejected `Secure`
+      // cookies over plain-HTTP localhost, which would silently break
+      // local-dev login on Safari if this were hardcoded to `true`.
+      secure: process.env.NODE_ENV === 'production',
       maxAge: SESSION_EXPIRES_IN_MS / 1000,
       path: '/',
     });

@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 vi.mock('@/lib/firebase/admin', () => ({ getAdminApp: vi.fn(() => ({})) }));
@@ -26,7 +26,14 @@ beforeEach(() => {
 });
 
 describe('POST /api/auth/session', () => {
-  test('exchanges a valid idToken for a session cookie', async () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+
+  afterEach(() => {
+    vi.stubEnv('NODE_ENV', originalNodeEnv ?? 'test');
+  });
+
+  test('exchanges a valid idToken for a session cookie, with secure: false outside production (Minor #6: Safari rejects Secure cookies over plain-HTTP localhost)', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
     const createSessionCookie = vi.fn().mockResolvedValue('cookie-value');
     mockGetAuth.mockReturnValue({ createSessionCookie });
     const set = vi.fn();
@@ -41,7 +48,23 @@ describe('POST /api/auth/session', () => {
     expect(set).toHaveBeenCalledWith(
       'session',
       'cookie-value',
-      expect.objectContaining({ httpOnly: true, secure: true, path: '/' })
+      expect.objectContaining({ httpOnly: true, secure: false, path: '/' })
+    );
+  });
+
+  test('sets secure: true in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const createSessionCookie = vi.fn().mockResolvedValue('cookie-value');
+    mockGetAuth.mockReturnValue({ createSessionCookie });
+    const set = vi.fn();
+    mockCookies.mockResolvedValue({ set, delete: vi.fn() });
+
+    await POST(makeRequest({ idToken: 'abc' }));
+
+    expect(set).toHaveBeenCalledWith(
+      'session',
+      'cookie-value',
+      expect.objectContaining({ secure: true })
     );
   });
 
