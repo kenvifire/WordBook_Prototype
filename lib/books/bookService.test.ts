@@ -233,6 +233,10 @@ describe('addBook', () => {
       intervalDays: 1,
       nextReviewDate: today,
       lastRating: null,
+      // Important #2 regression fix: extraction-time words are never
+      // "reader-added", and this flag must be set at creation (not left
+      // undefined) since it's the only immutable signal /review relies on.
+      addedFromReader: false,
     });
     expect(doc.sectionRefs).toEqual([{ bookId: result.bookId, sectionId: sections[0].id }]);
   });
@@ -355,6 +359,45 @@ describe('addBook', () => {
     // The new word was created normally.
     const newDoc = wordDoc(store, 'user-1', newWord) as any;
     expect(newDoc).toMatchObject({ definition: `definition for ${newWord}` });
+  });
+
+  test('Important #2 regression: re-extracting a reader-added word grows its sectionRefs but never touches addedFromReader', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockFetchDefinition.mockResolvedValue('a definition');
+
+    // Simulates a word originally created via the reader's "Add to my
+    // vocabulary" button (app/api/words/lookup/route.ts): addedFromReader
+    // true, sectionRefs empty.
+    const readerWord = uniqueWord(0);
+    store.set(`words/user-1_${readerWord}`, {
+      userId: 'user-1',
+      word: readerWord,
+      definition: 'reader-added definition',
+      sectionRefs: [],
+      repetitions: 0,
+      easeFactor: 2.5,
+      intervalDays: 1,
+      nextReviewDate: '2026-01-01',
+      lastRating: null,
+      addedFromReader: true,
+    });
+
+    const result = await addBook({
+      title: 'Later Book',
+      format: 'text',
+      rawText: readerWord,
+      userId: 'user-1',
+    });
+
+    // sectionRefs legitimately grows (existing addBook behavior) ...
+    const doc = wordDoc(store, 'user-1', readerWord) as any;
+    const sections = sectionsForBook(store, result.bookId);
+    expect(doc.sectionRefs).toEqual([{ bookId: result.bookId, sectionId: sections[0].id }]);
+
+    // ... but addedFromReader must survive untouched, since it's the
+    // immutable signal /review relies on — not sectionRefs.
+    expect(doc.addedFromReader).toBe(true);
   });
 
   test('two concurrent addBook calls creating the same new word result in exactly one document, and the losing call still gets a usable word id', async () => {

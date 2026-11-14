@@ -32,7 +32,7 @@ type WordRow = Record<string, unknown>;
 
 // A minimal fake Firestore supporting exactly the query this page issues:
 // `words` collection, `.where('userId', '==', uid).where('nextReviewDate',
-// '<=', today).orderBy('nextReviewDate')`. The `sectionRefs.length === 0 ||
+// '<=', today).orderBy('nextReviewDate')`. The `addedFromReader === true ||
 // lastRating !== null` carve-out is applied in application code by the page
 // itself, so this fake only needs to honor the Firestore-native filters —
 // the regression-fix behavior is exercised through the page, not the fake.
@@ -81,7 +81,7 @@ beforeEach(() => {
 });
 
 describe('ReviewPage', () => {
-  test('I9 regression: a word added via "Add to my vocabulary" (no bookId, never rated) still appears', async () => {
+  test('I9 regression: a word added via "Add to my vocabulary" (addedFromReader, never rated) still appears', async () => {
     const today = new Date().toISOString().slice(0, 10);
     const db = createFakeFirestore([
       {
@@ -89,7 +89,7 @@ describe('ReviewPage', () => {
         userId: 'user-1',
         word: 'serendipity',
         definition: 'a fortunate accident',
-        sectionRefs: [],
+        addedFromReader: true,
         lastRating: null,
         nextReviewDate: today,
       },
@@ -111,7 +111,7 @@ describe('ReviewPage', () => {
         userId: 'user-1',
         word: 'ephemeral',
         definition: 'lasting a short time',
-        sectionRefs: [{ bookId: 'book-1', sectionId: 'section-1' }],
+        addedFromReader: false,
         lastRating: null,
         nextReviewDate: today,
       },
@@ -133,7 +133,7 @@ describe('ReviewPage', () => {
         userId: 'user-1',
         word: 'luminous',
         definition: 'giving off light',
-        sectionRefs: [{ bookId: 'book-1', sectionId: 'section-1' }],
+        addedFromReader: false,
         lastRating: 'good',
         nextReviewDate: today,
       },
@@ -145,6 +145,36 @@ describe('ReviewPage', () => {
     render(jsx);
 
     expect(screen.getByText('luminous')).toBeInTheDocument();
+  });
+
+  test('regression: a reader-added word later re-extracted by a new book (sectionRefs now non-empty) still appears, because addedFromReader is immutable', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const db = createFakeFirestore([
+      {
+        id: 'word-1',
+        userId: 'user-1',
+        word: 'serendipity',
+        definition: 'a fortunate accident',
+        // Simulates the exact scenario from Important #2: this word was
+        // created via "Add to my vocabulary" (addedFromReader: true), then
+        // later extracted again by bookService.addBook while processing a
+        // new book, which appended to its sectionRefs. Before the
+        // addedFromReader fix, the old `sectionRefs.length === 0` signal
+        // would now be false and the word would silently drop off this
+        // page until that book's section got practiced.
+        addedFromReader: true,
+        sectionRefs: [{ bookId: 'book-99', sectionId: 'section-99' }],
+        lastRating: null,
+        nextReviewDate: today,
+      },
+    ]);
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const jsx = await ReviewPage();
+    render(jsx);
+
+    expect(screen.getByText('serendipity')).toBeInTheDocument();
   });
 
   test('redirects to /login when there is no authed user', async () => {
@@ -163,7 +193,7 @@ describe('ReviewPage', () => {
         userId: 'user-1',
         word: 'nebulous',
         definition: 'unclear',
-        sectionRefs: [],
+        addedFromReader: false,
         lastRating: 'good',
         nextReviewDate: future,
       },

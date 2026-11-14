@@ -20,6 +20,7 @@ type WordDoc = {
   intervalDays: number;
   nextReviewDate: string;
   lastRating: string | null;
+  addedFromReader?: boolean;
 };
 
 export async function POST(request: NextRequest) {
@@ -102,9 +103,14 @@ export async function POST(request: NextRequest) {
 
   // A reader-added word has no originating book or section — unlike
   // bookService's extraction-time words, which always get a non-empty
-  // sectionRefs at creation. This empty array is exactly the signal
-  // /review's controller uses to treat this word as "reader-added, no
-  // originating book" even before it's ever been rated.
+  // sectionRefs at creation. `sectionRefs` is NOT a reliable long-term
+  // signal of "reader-added" though: bookService.addBook grows an
+  // EXISTING word's sectionRefs on every re-extraction, including a word
+  // that originated here. `addedFromReader` is the immutable signal
+  // instead — set once, here, at creation, and never written again by
+  // any later code path (including this route's own existing-word
+  // branches above). /review's controller reads this flag, not
+  // sectionRefs, to decide whether a never-rated word should still show up.
   const newWordDoc: WordDoc = {
     userId: user.uid,
     word,
@@ -115,6 +121,7 @@ export async function POST(request: NextRequest) {
     intervalDays: 1,
     nextReviewDate: todayDateString(),
     lastRating: null,
+    addedFromReader: true,
   };
 
   try {

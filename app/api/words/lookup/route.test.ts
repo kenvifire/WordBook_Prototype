@@ -180,6 +180,9 @@ describe('POST /api/words/lookup', () => {
       intervalDays: 1,
       nextReviewDate: '2026-01-01',
       lastRating: null,
+      // Important #2: the immutable origin flag /review relies on instead
+      // of sectionRefs.length === 0.
+      addedFromReader: true,
     });
     expect(stored.bookId).toBeUndefined();
   });
@@ -221,12 +224,13 @@ describe('POST /api/words/lookup', () => {
       userId: 'user-1',
       word: 'zzzqaa',
       definition: null,
-      sectionRefs: [],
+      sectionRefs: [{ bookId: 'book-1', sectionId: 'section-1' }],
       repetitions: 4,
       easeFactor: 2.9,
       intervalDays: 30,
       nextReviewDate: '2026-01-10',
       lastRating: 'easy',
+      addedFromReader: false,
     });
     mockFetchDefinition.mockResolvedValue('a definition at last');
 
@@ -242,6 +246,9 @@ describe('POST /api/words/lookup', () => {
       easeFactor: 2.9,
       intervalDays: 30,
       lastRating: 'easy',
+      // The definition-retry update must touch only `definition` — never
+      // addedFromReader, the immutable origin flag.
+      addedFromReader: false,
     });
   });
 

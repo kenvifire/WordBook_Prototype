@@ -84,6 +84,12 @@ function newWordDoc(params: {
     intervalDays: 1,
     nextReviewDate: todayDateString(),
     lastRating: null,
+    // Immutable origin flag, set once at creation and never written again
+    // (including by the existing-word branch below, which only ever
+    // appends to sectionRefs). /review relies on this — not sectionRefs,
+    // which grows over an extraction-time word's whole life — to tell an
+    // extraction-time word apart from a reader-added one.
+    addedFromReader: false,
   };
 }
 

@@ -9,7 +9,7 @@ type WordDoc = {
   word: string;
   definition: string | null;
   lastRating: string | null;
-  sectionRefs?: { bookId: string; sectionId: string }[];
+  addedFromReader?: boolean;
 };
 
 export default async function ReviewPage() {
@@ -34,17 +34,22 @@ export default async function ReviewPage() {
   // seen before.
   //
   // Exception: a word added via the reader's "Add to my vocabulary" button
-  // (app/api/words/lookup/route.ts) has no section link (sectionRefs is
-  // empty), so the practice flow never surfaces it either. Without this
-  // "sectionRefs.length === 0" carve-out, such a word would never appear
-  // anywhere — tapped-and-added words must still show up here even before
-  // their first rating.
+  // (app/api/words/lookup/route.ts) has no section link, so the practice
+  // flow never surfaces it either — it must still show up here even before
+  // its first rating. This carve-out is keyed on the immutable
+  // `addedFromReader` flag, NOT on `sectionRefs.length === 0`: sectionRefs
+  // grows over a word's whole life (bookService.addBook appends to an
+  // EXISTING word's sectionRefs on every re-extraction, including a word
+  // that originated here), so it stops being empty the moment any later
+  // book happens to contain the same word — which would otherwise make the
+  // word silently drop off this page until its now-nonempty sectionRefs'
+  // section gets practiced, possibly weeks away.
   //
   // Firestore can't express "nextReviewDate <= today AND (lastRating IS NOT
-  // NULL OR sectionRefs is empty)" as a single compound query (an OR across
-  // two different fields), so the userId + nextReviewDate range query runs
-  // alone and the lastRating/sectionRefs carve-out is applied in memory on
-  // the result set below.
+  // NULL OR addedFromReader IS true)" as a single compound query (an OR
+  // across two different fields), so the userId + nextReviewDate range
+  // query runs alone and the lastRating/addedFromReader carve-out is
+  // applied in memory on the result set below.
   const snapshot = await db
     .collection('words')
     .where('userId', '==', user.uid)
@@ -54,7 +59,7 @@ export default async function ReviewPage() {
 
   const words: FlashcardWord[] = snapshot.docs
     .map((doc) => ({ id: doc.id, ...(doc.data() as WordDoc) }))
-    .filter((word) => word.lastRating !== null || (word.sectionRefs ?? []).length === 0)
+    .filter((word) => word.lastRating !== null || word.addedFromReader === true)
     .map((word) => ({ id: word.id, word: word.word, definition: word.definition }));
 
   return (
