@@ -310,4 +310,62 @@ describe('ReadPage', () => {
       expect(screen.queryByRole('link', { name: 'Next section →' })).not.toBeInTheDocument();
     });
   });
+
+  describe('markSectionComplete ownership check (Minor #7)', () => {
+    // The server action is embedded directly as the <form>'s `action` prop
+    // on the JSX tree this (server component) function returns — grab it
+    // from there to invoke it the same way Next.js would on form submit.
+    function extractMarkSectionCompleteAction(jsx: any): () => Promise<void> {
+      const formElement = jsx.props.children.find(
+        (child: any) => child?.type === 'form'
+      );
+      return formElement.props.action;
+    }
+
+    test('rejects completion (404) when the acting user no longer owns the book', async () => {
+      const { db, store } = createFakeFirestore();
+      mockGetFirestore.mockReturnValue(db);
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
+      putSection(store, 'book-1', 'section-1', {
+        sectionNumber: 1,
+        status: 'ready_to_read',
+        text: makeSectionText(5),
+      });
+
+      // Page load is authenticated as the real owner...
+      mockGetAuthedUser.mockResolvedValueOnce({ uid: 'user-1' });
+      const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+      const markSectionComplete = extractMarkSectionCompleteAction(jsx);
+
+      // ...but by the time the action actually runs, the acting session
+      // belongs to someone else — the action must re-check ownership
+      // itself rather than trusting the page-load check.
+      mockGetAuthedUser.mockResolvedValueOnce({ uid: 'attacker-uid' });
+
+      await expect(markSectionComplete()).rejects.toThrow('NEXT_NOT_FOUND');
+
+      const section = store.get('books/book-1/sections/section-1') as any;
+      expect(section.status).toBe('ready_to_read');
+    });
+
+    test('marks the section complete when the acting user owns the book', async () => {
+      const { db, store } = createFakeFirestore();
+      mockGetFirestore.mockReturnValue(db);
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
+      putSection(store, 'book-1', 'section-1', {
+        sectionNumber: 1,
+        status: 'ready_to_read',
+        text: makeSectionText(5),
+      });
+
+      mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+      const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+      const markSectionComplete = extractMarkSectionCompleteAction(jsx);
+
+      await expect(markSectionComplete()).rejects.toThrow('NEXT_REDIRECT:/book/book-1');
+
+      const section = store.get('books/book-1/sections/section-1') as any;
+      expect(section.status).toBe('completed');
+    });
+  });
 });

@@ -106,6 +106,18 @@ export default async function ReadPage({
     }
 
     const actingDb = getFirestore(getAdminApp());
+
+    // Minor #7: a server action's closed-over `id`/`sectionId` are
+    // Next.js-encrypted, so only someone who could render this page could
+    // normally invoke this — but that's incidental, not an ownership
+    // check. Re-verify ownership of the book here, independently of the
+    // page-load check above, before writing.
+    const actingBookSnap = await actingDb.collection('books').doc(id).get();
+    const actingBookData = actingBookSnap.data() as { userId: string } | undefined;
+    if (!actingBookSnap.exists || !actingBookData || actingBookData.userId !== actingUser.uid) {
+      notFound();
+    }
+
     await actingDb
       .collection('books')
       .doc(id)
