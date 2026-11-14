@@ -78,12 +78,27 @@ function newWordDoc(params: {
   userId: string;
   word: string;
   definition: string | null;
+  bookId: string;
+  sectionId: string;
 }): Record<string, unknown> {
   return {
     userId: params.userId,
     word: params.word,
     definition: params.definition,
-    sectionRefs: [] as { bookId: string; sectionId: string }[],
+    // Linked to the section it's being extracted from right here at create
+    // time — not left as [] and filled in by the later batch — so a word
+    // document is never observably "reader-added" (sectionRefs: []) during
+    // the window between this create() and the batch commit below, nor
+    // permanently so if the batch never runs (e.g. a crash, or this word
+    // being deleted before the batch's update() can run). The batch's
+    // arrayUnion for this same {bookId, sectionId} entry is then an
+    // idempotent no-op for whichever caller's create() actually wins a
+    // race; it's still load-bearing for the LOSER of that race, which falls
+    // through to the catch below and still needs its own section linked.
+    sectionRefs: [{ bookId: params.bookId, sectionId: params.sectionId }] as {
+      bookId: string;
+      sectionId: string;
+    }[],
     repetitions: 0,
     easeFactor: 2.5,
     intervalDays: 1,
@@ -165,7 +180,7 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
         try {
           await wordsCollection
             .doc(wordId)
-            .create(newWordDoc({ userId, word, definition }));
+            .create(newWordDoc({ userId, word, definition, bookId, sectionId }));
         } catch (error) {
           if (!isAlreadyExistsError(error)) {
             throw error;

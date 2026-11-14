@@ -20,5 +20,9 @@ export function getAdminApp(): App {
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     }),
+    // Required for firebase-admin/storage's getStorage(app).bucket() (no
+    // name given) to resolve a default bucket — the Admin SDK cannot infer
+    // one from service-account credentials alone.
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
   });
 }

@@ -235,6 +235,62 @@ describe('addBook', () => {
     expect(doc.sectionRefs).toEqual([{ bookId: result.bookId, sectionId: sections[0].id }]);
   });
 
+  test('a brand-new word has its sectionRefs entry set at create() time, before the linking batch ever commits', async () => {
+    const { db, store } = createFakeFirestore();
+
+    // Gate the batch commit so we can inspect the store in the window
+    // between create() resolving and the batch actually committing — the
+    // exact window where a word doc could previously be observed with
+    // sectionRefs: [] (indistinguishable from a reader-added word).
+    let releaseBatch!: () => void;
+    const batchGate = new Promise<void>((resolve) => {
+      releaseBatch = resolve;
+    });
+    const originalBatch = db.batch.bind(db);
+    db.batch = () => {
+      const batch = originalBatch();
+      const originalCommit = batch.commit.bind(batch);
+      batch.commit = async () => {
+        await batchGate;
+        return originalCommit();
+      };
+      return batch;
+    };
+
+    mockGetFirestore.mockReturnValue(db);
+    mockFetchDefinition.mockResolvedValue('a definition');
+
+    const word = uniqueWord(0);
+    const addBookPromise = addBook({
+      title: 'Gated Batch Book',
+      format: 'text',
+      rawText: word,
+      userId: 'user-1',
+    });
+
+    // Flush the microtask queue (all of addBook's work up to the gated
+    // batch.commit() is pending promises, no real timers) without resolving
+    // the gate, so execution is parked right at `await batch.commit()`.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const docBeforeBatch = wordDoc(store, 'user-1', word) as any;
+    expect(docBeforeBatch).toBeDefined();
+    expect(docBeforeBatch.sectionRefs).toHaveLength(1);
+    expect(docBeforeBatch.sectionRefs[0]).toMatchObject({
+      bookId: expect.any(String),
+      sectionId: expect.any(String),
+    });
+
+    releaseBatch();
+    const result = await addBookPromise;
+
+    const sections = sectionsForBook(store, result.bookId);
+    expect(docBeforeBatch.sectionRefs[0]).toEqual({
+      bookId: result.bookId,
+      sectionId: sections[0].id,
+    });
+  });
+
   test('an existing word (same deterministic id) is NOT overwritten — definition and SM-2 state survive re-extraction by a new book', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
