@@ -43,8 +43,25 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** Clears the session cookie on sign-out. */
+/**
+ * Clears the session cookie on sign-out, and also revokes the signed-out
+ * user's refresh tokens server-side. Without this, a copied/leaked session
+ * cookie would keep working (Firebase session cookies aren't otherwise
+ * invalidated by clearing the browser's copy) until its own 14-day expiry.
+ */
 export async function DELETE() {
-  (await cookies()).delete('session');
+  const cookieStore = await cookies();
+  const sessionCookie = cookieStore.get('session')?.value;
+
+  if (sessionCookie) {
+    try {
+      const { uid } = await getAuth(getAdminApp()).verifySessionCookie(sessionCookie);
+      await getAuth(getAdminApp()).revokeRefreshTokens(uid);
+    } catch {
+      // Cookie was already invalid/expired — nothing to revoke.
+    }
+  }
+
+  cookieStore.delete('session');
   return new NextResponse(null, { status: 204 });
 }

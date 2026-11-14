@@ -79,9 +79,40 @@ describe('POST /api/auth/session', () => {
 });
 
 describe('DELETE /api/auth/session', () => {
-  test('clears the session cookie', async () => {
+  test("revokes the session's refresh tokens, then clears the cookie", async () => {
+    const get = vi.fn().mockReturnValue({ value: 'cookie-value' });
     const del = vi.fn();
-    mockCookies.mockResolvedValue({ set: vi.fn(), delete: del });
+    mockCookies.mockResolvedValue({ set: vi.fn(), delete: del, get });
+    const verifySessionCookie = vi.fn().mockResolvedValue({ uid: 'user-1' });
+    const revokeRefreshTokens = vi.fn().mockResolvedValue(undefined);
+    mockGetAuth.mockReturnValue({ verifySessionCookie, revokeRefreshTokens });
+
+    const response = await DELETE();
+
+    expect(verifySessionCookie).toHaveBeenCalledWith('cookie-value');
+    expect(revokeRefreshTokens).toHaveBeenCalledWith('user-1');
+    expect(response.status).toBe(204);
+    expect(del).toHaveBeenCalledWith('session');
+  });
+
+  test('clears the cookie even when there is no session cookie to revoke', async () => {
+    const get = vi.fn().mockReturnValue(undefined);
+    const del = vi.fn();
+    mockCookies.mockResolvedValue({ set: vi.fn(), delete: del, get });
+
+    const response = await DELETE();
+
+    expect(response.status).toBe(204);
+    expect(del).toHaveBeenCalledWith('session');
+    expect(mockGetAuth).not.toHaveBeenCalled();
+  });
+
+  test('clears the cookie even when the cookie is already invalid (verifySessionCookie rejects)', async () => {
+    const get = vi.fn().mockReturnValue({ value: 'bad-cookie' });
+    const del = vi.fn();
+    mockCookies.mockResolvedValue({ set: vi.fn(), delete: del, get });
+    const verifySessionCookie = vi.fn().mockRejectedValue(new Error('invalid'));
+    mockGetAuth.mockReturnValue({ verifySessionCookie, revokeRefreshTokens: vi.fn() });
 
     const response = await DELETE();
 

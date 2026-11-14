@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { getAuth, signOut } from 'firebase/auth';
+import { getFirebaseClientApp } from '@/lib/firebase/client';
 
 export default function SignOutButton() {
   const router = useRouter();
@@ -9,6 +11,11 @@ export default function SignOutButton() {
 
   async function handleSignOut() {
     setSubmitting(true);
+    // Clears the Firebase client SDK's own local auth state (IndexedDB),
+    // in addition to the server-side session cookie clear + refresh-token
+    // revocation below. Best-effort: a failure here must never block
+    // actually signing the user out of the app.
+    await signOut(getAuth(getFirebaseClientApp())).catch(() => {});
     await fetch('/api/auth/session', { method: 'DELETE' });
     router.push('/login');
   }
