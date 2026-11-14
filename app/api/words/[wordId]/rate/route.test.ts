@@ -1,8 +1,14 @@
 // @vitest-environment node
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn(),
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: vi.fn(),
+}));
+
+vi.mock('@/lib/firebase/admin', () => ({ getAdminApp: vi.fn(() => ({})) }));
+
+vi.mock('@/lib/firebase/server', () => ({
+  getAuthedUser: vi.fn(),
 }));
 
 vi.mock('@/lib/sections/sectionService', () => ({
@@ -10,96 +16,71 @@ vi.mock('@/lib/sections/sectionService', () => ({
 }));
 
 import { NextRequest } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAuthedUser } from '@/lib/firebase/server';
 import { maybeUnlockNextSection } from '@/lib/sections/sectionService';
 import { POST } from './route';
 
-const mockCreateClient = createClient as unknown as ReturnType<typeof vi.fn>;
+const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
+const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
 const mockMaybeUnlockNextSection = maybeUnlockNextSection as unknown as ReturnType<typeof vi.fn>;
 
-type WordRow = Record<string, unknown>;
+type StoredDoc = Record<string, unknown>;
 
-function makeWordsBuilder(row: WordRow | null) {
-  const table = row ? [{ ...row }] : [];
-  let mode: 'select' | 'update' = 'select';
-  let filters: Record<string, unknown> = {};
-  let pendingUpdate: Record<string, unknown> = {};
+// A minimal fake Firestore, backed by an in-memory Map keyed by document
+// path, supporting exactly the operations the rate route needs: doc
+// get/update — mirroring the fake-store style already used in
+// lib/sections/sectionService.test.ts and lib/books/bookService.test.ts.
+function createFakeFirestore() {
+  const store = new Map<string, StoredDoc>();
 
-  const builder: any = {};
+  function makeDocRef(path: string): any {
+    const id = path.split('/').pop()!;
+    return {
+      id,
+      path,
+      async get() {
+        const data = store.get(path);
+        return {
+          exists: data !== undefined,
+          id,
+          data: () => (data ? { ...data } : undefined),
+        };
+      },
+      async update(data: Record<string, unknown>) {
+        const existing = store.get(path);
+        if (!existing) {
+          throw new Error(`No document to update at ${path}`);
+        }
+        store.set(path, { ...existing, ...data });
+      },
+    };
+  }
 
-  builder.select = vi.fn(() => {
-    mode = 'select';
-    filters = {};
-    return builder;
-  });
+  function makeCollectionRef(path: string): any {
+    return {
+      path,
+      doc(id: string) {
+        return makeDocRef(`${path}/${id}`);
+      },
+    };
+  }
 
-  builder.update = vi.fn((data: Record<string, unknown>) => {
-    mode = 'update';
-    pendingUpdate = data;
-    filters = {};
-    return builder;
-  });
-
-  builder.eq = vi.fn((column: string, value: unknown) => {
-    filters = { ...filters, [column]: value };
-    if (mode === 'update') {
-      const found = table.find((r) =>
-        Object.entries(filters).every(([col, val]) => r[col] === val)
-      );
-      if (found) {
-        Object.assign(found, pendingUpdate);
-      }
-      return Promise.resolve({ error: null });
-    }
-    return builder;
-  });
-
-  builder.single = vi.fn(() => {
-    const found = table.find((r) => Object.entries(filters).every(([col, val]) => r[col] === val));
-    return Promise.resolve({ data: found ?? null, error: found ? null : { message: 'no rows' } });
-  });
-
-  builder.getTable = () => table;
-  return builder;
-}
-
-function makeSectionWordsBuilder(rows: { section_id: string; word_id: string }[]) {
-  const builder: any = {};
-  builder.select = vi.fn(() => builder);
-  builder.eq = vi.fn((_column: string, value: string) => {
-    const data = rows.filter((row) => row.word_id === value);
-    return Promise.resolve({ data, error: null });
-  });
-  return builder;
-}
-
-function makeSupabaseMock(options: {
-  user: { id: string } | null;
-  wordRow: WordRow | null;
-  sectionWords?: { section_id: string; word_id: string }[];
-}) {
-  const words = makeWordsBuilder(options.wordRow);
-  const sectionWords = makeSectionWordsBuilder(options.sectionWords ?? []);
-
-  const from = vi.fn((table: string) => {
-    switch (table) {
-      case 'words':
-        return words;
-      case 'section_words':
-        return sectionWords;
-      default:
-        throw new Error(`Unexpected table: ${table}`);
-    }
-  });
-
-  return {
-    auth: {
-      getUser: vi.fn().mockResolvedValue({ data: { user: options.user }, error: null }),
+  const db = {
+    collection(name: string) {
+      return makeCollectionRef(name);
     },
-    from,
-    words,
-    sectionWords,
-  } as any;
+  };
+
+  return { db, store };
+}
+
+function putWord(store: Map<string, StoredDoc>, wordId: string, data: StoredDoc) {
+  store.set(`words/${wordId}`, { ...data });
+}
+
+function getWord(store: Map<string, StoredDoc>, wordId: string) {
+  return store.get(`words/${wordId}`) as any;
 }
 
 function makeRequest(wordId: string, body: unknown) {
@@ -109,8 +90,27 @@ function makeRequest(wordId: string, body: unknown) {
   });
 }
 
+function baseWord(overrides: Partial<StoredDoc> = {}): StoredDoc {
+  return {
+    userId: 'user-1',
+    word: 'ephemeral',
+    definition: 'lasting a short time',
+    sectionRefs: [
+      { bookId: 'book-1', sectionId: 'section-1' },
+      { bookId: 'book-1', sectionId: 'section-2' },
+    ],
+    repetitions: 2,
+    easeFactor: 2.0,
+    intervalDays: 10,
+    nextReviewDate: '2026-01-01',
+    lastRating: 'good',
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
-  mockCreateClient.mockReset();
+  mockGetFirestore.mockReset();
+  mockGetAuthedUser.mockReset();
   mockMaybeUnlockNextSection.mockReset();
   // applyRating's nextReviewDate is derived from `new Date()` inside the
   // route, so the system clock is pinned for deterministic assertions.
@@ -123,29 +123,11 @@ afterEach(() => {
 });
 
 describe('POST /api/words/[wordId]/rate', () => {
-  test('applies the rating via applyRating, persists the new state, and triggers unlock checks', async () => {
-    const wordRow = {
-      id: 'word-1',
-      user_id: 'user-1',
-      word: 'ephemeral',
-      definition: 'lasting a short time',
-      book_id: 'book-1',
-      repetitions: 2,
-      ease_factor: 2.0,
-      interval_days: 10,
-      next_review_date: '2026-01-01',
-      last_rating: 'good',
-      created_at: '2026-01-01T00:00:00.000Z',
-    };
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      wordRow,
-      sectionWords: [
-        { section_id: 'section-1', word_id: 'word-1' },
-        { section_id: 'section-2', word_id: 'word-1' },
-      ],
-    });
-    mockCreateClient.mockResolvedValue(supabase);
+  test('applies the rating, persists the new state, and triggers unlock checks for every section in sectionRefs', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putWord(store, 'word-1', baseWord());
 
     const response = await POST(makeRequest('word-1', { rating: 'good' }), {
       params: Promise.resolve({ wordId: 'word-1' }),
@@ -153,94 +135,79 @@ describe('POST /api/words/[wordId]/rate', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(supabase.words.update).toHaveBeenCalledWith({
+    expect(getWord(store, 'word-1')).toMatchObject({
       repetitions: 3,
-      ease_factor: 2.0,
-      interval_days: 20,
-      next_review_date: '2026-01-21',
-      last_rating: 'good',
+      easeFactor: 2.0,
+      intervalDays: 20,
+      nextReviewDate: '2026-01-21',
+      lastRating: 'good',
     });
     expect(body).toMatchObject({
       id: 'word-1',
       repetitions: 3,
-      ease_factor: 2.0,
-      interval_days: 20,
-      next_review_date: '2026-01-21',
-      last_rating: 'good',
+      easeFactor: 2.0,
+      intervalDays: 20,
+      nextReviewDate: '2026-01-21',
+      lastRating: 'good',
     });
 
     expect(mockMaybeUnlockNextSection).toHaveBeenCalledTimes(2);
-    expect(mockMaybeUnlockNextSection).toHaveBeenCalledWith(supabase, 'section-1');
-    expect(mockMaybeUnlockNextSection).toHaveBeenCalledWith(supabase, 'section-2');
+    expect(mockMaybeUnlockNextSection).toHaveBeenCalledWith('book-1', 'section-1');
+    expect(mockMaybeUnlockNextSection).toHaveBeenCalledWith('book-1', 'section-2');
   });
 
-  test('rating an unknown wordId returns 404', async () => {
-    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, wordRow: null });
-    mockCreateClient.mockResolvedValue(supabase);
+  test('rating an unknown or not-owned wordId returns 404', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
 
-    const response = await POST(makeRequest('missing-word', { rating: 'good' }), {
+    const missingResponse = await POST(makeRequest('missing-word', { rating: 'good' }), {
       params: Promise.resolve({ wordId: 'missing-word' }),
     });
+    expect(missingResponse.status).toBe(404);
+    expect(mockMaybeUnlockNextSection).not.toHaveBeenCalled();
 
-    expect(response.status).toBe(404);
-    expect(supabase.words.update).not.toHaveBeenCalled();
+    putWord(store, 'word-2', baseWord({ userId: 'other-user' }));
+    const notOwnedResponse = await POST(makeRequest('word-2', { rating: 'good' }), {
+      params: Promise.resolve({ wordId: 'word-2' }),
+    });
+    expect(notOwnedResponse.status).toBe(404);
+    expect(getWord(store, 'word-2')).toMatchObject({ repetitions: 2 });
     expect(mockMaybeUnlockNextSection).not.toHaveBeenCalled();
   });
 
   test('returns 401 when there is no authenticated user', async () => {
-    const supabase = makeSupabaseMock({ user: null, wordRow: null });
-    mockCreateClient.mockResolvedValue(supabase);
+    const { db } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue(null);
 
     const response = await POST(makeRequest('word-1', { rating: 'good' }), {
       params: Promise.resolve({ wordId: 'word-1' }),
     });
 
     expect(response.status).toBe(401);
-    expect(supabase.words.update).not.toHaveBeenCalled();
   });
 
-  test('rejects an invalid rating with 400 before touching the word', async () => {
-    const wordRow = {
-      id: 'word-1',
-      user_id: 'user-1',
-      word: 'ephemeral',
-      definition: 'lasting a short time',
-      book_id: 'book-1',
-      repetitions: 2,
-      ease_factor: 2.0,
-      interval_days: 10,
-      next_review_date: '2026-01-01',
-      last_rating: 'good',
-      created_at: '2026-01-01T00:00:00.000Z',
-    };
-    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, wordRow });
-    mockCreateClient.mockResolvedValue(supabase);
+  test('returns 400 for a rating outside again/hard/good/easy, before any write', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putWord(store, 'word-1', baseWord());
 
     const response = await POST(makeRequest('word-1', { rating: 'excellent' }), {
       params: Promise.resolve({ wordId: 'word-1' }),
     });
 
     expect(response.status).toBe(400);
-    expect(supabase.words.update).not.toHaveBeenCalled();
+    expect(getWord(store, 'word-1')).toMatchObject({ repetitions: 2 });
     expect(mockMaybeUnlockNextSection).not.toHaveBeenCalled();
   });
 
-  test('M5: a malformed (non-JSON) body returns 400 instead of a 500', async () => {
-    const wordRow = {
-      id: 'word-1',
-      user_id: 'user-1',
-      word: 'ephemeral',
-      definition: 'lasting a short time',
-      book_id: 'book-1',
-      repetitions: 2,
-      ease_factor: 2.0,
-      interval_days: 10,
-      next_review_date: '2026-01-01',
-      last_rating: 'good',
-      created_at: '2026-01-01T00:00:00.000Z',
-    };
-    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, wordRow });
-    mockCreateClient.mockResolvedValue(supabase);
+  test('a malformed request body returns 400, not 500', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putWord(store, 'word-1', baseWord());
 
     const request = new NextRequest('http://localhost/api/words/word-1/rate', {
       method: 'POST',
@@ -250,30 +217,15 @@ describe('POST /api/words/[wordId]/rate', () => {
     const response = await POST(request, { params: Promise.resolve({ wordId: 'word-1' }) });
 
     expect(response.status).toBe(400);
-    expect(supabase.words.update).not.toHaveBeenCalled();
+    expect(getWord(store, 'word-1')).toMatchObject({ repetitions: 2 });
     expect(mockMaybeUnlockNextSection).not.toHaveBeenCalled();
   });
 
-  test('still returns the successful word update when the unlock check throws', async () => {
-    const wordRow = {
-      id: 'word-1',
-      user_id: 'user-1',
-      word: 'ephemeral',
-      definition: 'lasting a short time',
-      book_id: 'book-1',
-      repetitions: 2,
-      ease_factor: 2.0,
-      interval_days: 10,
-      next_review_date: '2026-01-01',
-      last_rating: 'good',
-      created_at: '2026-01-01T00:00:00.000Z',
-    };
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      wordRow,
-      sectionWords: [{ section_id: 'section-1', word_id: 'word-1' }],
-    });
-    mockCreateClient.mockResolvedValue(supabase);
+  test('an unlock-check failure after a successful word update is logged, not returned as an error (no double-apply risk on client retry)', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putWord(store, 'word-1', baseWord({ sectionRefs: [{ bookId: 'book-1', sectionId: 'section-1' }] }));
     mockMaybeUnlockNextSection.mockRejectedValue(new Error('boom'));
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -283,7 +235,7 @@ describe('POST /api/words/[wordId]/rate', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(supabase.words.update).toHaveBeenCalledTimes(1);
+    expect(getWord(store, 'word-1')).toMatchObject({ repetitions: 3 });
     expect(body).toMatchObject({ id: 'word-1', repetitions: 3 });
     expect(consoleErrorSpy).toHaveBeenCalled();
 
