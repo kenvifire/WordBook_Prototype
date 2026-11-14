@@ -97,6 +97,7 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
     author: author ?? null,
     format,
     rawText,
+    createdAt: FieldValue.serverTimestamp(),
   });
   const bookId = bookRef.id;
 

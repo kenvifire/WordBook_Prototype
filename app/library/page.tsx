@@ -19,21 +19,13 @@ export default async function LibraryPage() {
   }
 
   const db = getFirestore(getAdminApp());
-  const booksSnapshot = await db.collection('books').where('userId', '==', user.uid).get();
+  const booksSnapshot = await db
+    .collection('books')
+    .where('userId', '==', user.uid)
+    .orderBy('createdAt', 'desc')
+    .get();
 
-  // No `createdAt` data field is written by addBook() (lib/books/bookService.ts
-  // only sets userId/title/author/format/rawText), so this can't be an
-  // orderBy('createdAt') Firestore query — a doc missing the orderBy field
-  // would be silently excluded from the results. Each doc's own creation
-  // time, tracked by Firestore itself, is used instead to reproduce the
-  // Supabase build's "newest first" ordering without needing that field.
-  const sortedDocs = booksSnapshot.docs.slice().sort((a, b) => {
-    const aMillis = a.createTime?.toMillis() ?? 0;
-    const bMillis = b.createTime?.toMillis() ?? 0;
-    return bMillis - aMillis;
-  });
-
-  const books: Book[] = sortedDocs.map((doc) => {
+  const books: Book[] = booksSnapshot.docs.map((doc) => {
     const data = doc.data() as { title: string; author?: string | null };
     return { id: doc.id, title: data.title, author: data.author ?? null };
   });

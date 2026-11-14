@@ -4,6 +4,7 @@ vi.mock('firebase-admin/firestore', () => ({
   getFirestore: vi.fn(),
   FieldValue: {
     arrayUnion: (...values: unknown[]) => ({ __fakeArrayUnion: true, values }),
+    serverTimestamp: () => ({ __fakeServerTimestamp: true }),
   },
 }));
 
@@ -181,7 +182,7 @@ describe('addBook', () => {
       userId: 'user-1',
     });
 
-    const bookDoc = store.get(`books/${result.bookId}`);
+    const bookDoc = store.get(`books/${result.bookId}`) as any;
     expect(bookDoc).toMatchObject({
       userId: 'user-1',
       title: 'Common Words Book',
@@ -189,6 +190,7 @@ describe('addBook', () => {
       format: 'text',
       rawText,
     });
+    expect(bookDoc.createdAt).toEqual({ __fakeServerTimestamp: true });
 
     const sections = sectionsForBook(store, result.bookId);
     expect(sections).toHaveLength(3);
