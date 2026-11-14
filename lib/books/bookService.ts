@@ -136,8 +136,8 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
     // Select-first: a cheap get() per candidate (no write) tells us which
     // words are genuinely new for this user. Only those get a
     // fetchDefinition call and a .create() attempt — an already-existing
-    // word's definition/SM-2 state is never touched here, matching the
-    // Supabase build's "select-first, never upsert" rule.
+    // word's definition/SM-2 state is never touched here; we select first
+    // and never upsert.
     const existenceSnapshots = await Promise.all(
       wordIds.map((wordId) => wordsCollection.doc(wordId).get())
     );

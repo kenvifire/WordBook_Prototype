@@ -190,12 +190,11 @@ describe('maybeUnlockNextSection', () => {
     expect(getSection(store, 'book-1', 'section-2').status).toBe('locked');
   });
 
-  // I1 (ported from the Supabase build's fix-wave test): a `locked` section
-  // hasn't been reached by the learner yet, so it must never jump straight
-  // to `ready_to_read` just because its words happen to already be >=80%
-  // recognized globally (e.g. mastered via another book). Only a section
-  // whose CURRENT status is exactly `ready_to_practice` is eligible to
-  // advance.
+  // I1: a `locked` section hasn't been reached by the learner yet, so it
+  // must never jump straight to `ready_to_read` just because its words
+  // happen to already be >=80% recognized globally (e.g. mastered via
+  // another book). Only a section whose CURRENT status is exactly
+  // `ready_to_practice` is eligible to advance.
   test('I1: does nothing when the target section is locked (never advances locked -> ready_to_read)', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);

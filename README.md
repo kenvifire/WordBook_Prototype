@@ -31,7 +31,7 @@ No paid or keyed third-party APIs are required to run this app.
 
 3. **Deploy the security rules and indexes**
 
-   This repo's `firestore.rules`, `storage.rules`, and `firestore.indexes.json` are self-contained — no manual rule/index entry via the console is needed. With the [Firebase CLI](https://firebase.google.com/docs/cli) installed and logged in (`firebase login`), link the CLI to your project (`firebase use --add`) and deploy:
+   This repo's `firestore.rules`, `storage.rules`, and `firestore.indexes.json` are self-contained — no manual rule/index entry via the console is needed. `firebase.json` (which maps those files to CLI deploy targets) is already committed, so there's no need to run `firebase init`. With the [Firebase CLI](https://firebase.google.com/docs/cli) installed and logged in (`firebase login`), link the CLI to your project (`firebase use --add`) and deploy:
 
    ```bash
    firebase deploy --only firestore:rules,firestore:indexes,storage

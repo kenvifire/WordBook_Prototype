@@ -107,8 +107,8 @@ describe('POST /api/books', () => {
       userId: 'user-1',
     });
 
-    // Uploaded to the same epubs/{userId}/{uuid}.epub path convention the
-    // Supabase build used, now via the Admin SDK's Storage bucket.
+    // Uploaded to the epubs/{userId}/{uuid}.epub path convention, via the
+    // Admin SDK's Storage bucket.
     expect(storage.file).toHaveBeenCalledTimes(1);
     const filePath = storage.file.mock.calls[0][0] as string;
     expect(filePath).toMatch(/^epubs\/user-1\/[0-9a-f-]+\.epub$/);

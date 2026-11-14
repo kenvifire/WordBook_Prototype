@@ -114,8 +114,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Race: another concurrent add:true request for this same brand-new
-    // word won the create() first. Rather than surfacing a 500 to the
-    // loser (the Supabase build's M8 behavior), transparently re-fetch and
+    // word won the create() first, so this one fails with already-exists.
+    // Rather than surfacing a 500 to the loser, transparently re-fetch and
     // return the winner's data — strictly better, and still correct since
     // both requests were adding the exact same word for the exact same
     // user.
