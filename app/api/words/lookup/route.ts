@@ -2,25 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
 import { getAuthedUser } from '@/lib/firebase/server';
+import { isAlreadyExistsError } from '@/lib/firebase/errors';
 import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
 import { normalizeWord } from '@/lib/text/normalizeWord';
-
-// The gRPC status code for ALREADY_EXISTS (google-gax's `Status.ALREADY_EXISTS`,
-// also `@google-cloud/firestore`'s internal `StatusCode.ALREADY_EXISTS`).
-//
-// Verified against the installed firebase-admin/@google-cloud/firestore
-// packages (see lib/books/bookService.ts, which hit this same race first): a
-// failed `DocumentReference.create()` rejects with a raw `GoogleError` whose
-// `.code` is this *number*, not a string like 'already-exists'.
-const FIRESTORE_ALREADY_EXISTS_CODE = 6;
-
-function isAlreadyExistsError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { code?: unknown }).code === FIRESTORE_ALREADY_EXISTS_CODE
-  );
-}
 
 function todayDateString(): string {
   return new Date().toISOString().slice(0, 10);
@@ -82,7 +66,11 @@ export async function POST(request: NextRequest) {
     if (definition === null) {
       const retried = await fetchDefinition(word);
       if (retried !== null) {
-        await wordRef.update({ definition: retried });
+        try {
+          await wordRef.update({ definition: retried });
+        } catch {
+          return NextResponse.json({ error: 'Failed to update word' }, { status: 500 });
+        }
         definition = retried;
       }
     }

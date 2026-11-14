@@ -1,5 +1,6 @@
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
+import { isAlreadyExistsError } from '@/lib/firebase/errors';
 import { splitIntoSections } from '@/lib/text/sectionize';
 import { extractVocabulary } from '@/lib/text/extractVocabulary';
 import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
@@ -15,27 +16,6 @@ export type AddBookInput = {
 export type AddBookResult = {
   bookId: string;
 };
-
-// The gRPC status code for ALREADY_EXISTS (google-gax's `Status.ALREADY_EXISTS`,
-// also `@google-cloud/firestore`'s internal `StatusCode.ALREADY_EXISTS`).
-//
-// Verified against the installed firebase-admin/@google-cloud/firestore
-// packages: a failed `DocumentReference.create()` rejects with a raw
-// `GoogleError` whose `.code` is this *number*, not a string like
-// 'already-exists'. (That string-code shape belongs to other Firebase Admin
-// surfaces — Auth, Functions, Remote Config, etc. — which wrap gRPC errors
-// into their own `FirebaseError` subclasses. The core Firestore client used
-// by `firebase-admin/firestore` does not do that wrapping; it surfaces the
-// gRPC error as-is.)
-const FIRESTORE_ALREADY_EXISTS_CODE = 6;
-
-function isAlreadyExistsError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { code?: unknown }).code === FIRESTORE_ALREADY_EXISTS_CODE
-  );
-}
 
 // I6: a section's new words were previously all looked up via one unbounded
 // Promise.all, so a long section could fire thousands of simultaneous
