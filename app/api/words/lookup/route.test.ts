@@ -1,8 +1,14 @@
 // @vitest-environment node
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn(),
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: vi.fn(),
+}));
+
+vi.mock('@/lib/firebase/admin', () => ({ getAdminApp: vi.fn(() => ({})) }));
+
+vi.mock('@/lib/firebase/server', () => ({
+  getAuthedUser: vi.fn(),
 }));
 
 vi.mock('@/lib/dictionary/dictionaryApi', () => ({
@@ -10,93 +16,87 @@ vi.mock('@/lib/dictionary/dictionaryApi', () => ({
 }));
 
 import { NextRequest } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAuthedUser } from '@/lib/firebase/server';
 import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
 import { POST } from './route';
 
-const mockCreateClient = createClient as unknown as ReturnType<typeof vi.fn>;
+const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
+const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
 const mockFetchDefinition = fetchDefinition as unknown as ReturnType<typeof vi.fn>;
 
-type WordRow = Record<string, unknown>;
+type StoredDoc = Record<string, unknown>;
 
-function makeWordsBuilder(existingRows: WordRow[]) {
-  const table = [...existingRows];
-  let filters: Record<string, unknown> = {};
-  const insertedRows: WordRow[] = [];
-  const updateCalls: { data: WordRow; filters: Record<string, unknown> }[] = [];
+// A fake Firestore backed by a real in-memory Map keyed by full document
+// path, faithfully reproducing the semantics this route's race-safety
+// depends on: `.create()` throws synchronously (no await between the
+// existence check and the write) with a numeric `.code === 6` when a
+// document already exists at that path — mirroring
+// lib/books/bookService.test.ts's fake, which exercises the exact same
+// create()-based race.
+function createFakeFirestore() {
+  const store = new Map<string, StoredDoc>();
+  const createCallCount = new Map<string, number>();
 
-  const builder: any = {};
-
-  builder.select = vi.fn(() => {
-    filters = {};
-    return builder;
-  });
-
-  builder.eq = vi.fn((column: string, value: unknown) => {
-    filters = { ...filters, [column]: value };
-    return builder;
-  });
-
-  builder.maybeSingle = vi.fn(() => {
-    const found = table.find((row) =>
-      Object.entries(filters).every(([col, val]) => row[col] === val)
-    );
-    return Promise.resolve({ data: found ?? null, error: null });
-  });
-
-  builder.insert = vi.fn((row: WordRow) => {
-    insertedRows.push(row);
-    table.push(row);
-    return Promise.resolve({ error: null });
-  });
-
-  // Supports the update chain used for the null-definition retry:
-  // .update({ definition }).eq('id', x).is('definition', null)
-  builder.update = vi.fn((data: WordRow) => {
-    let updateFilters: Record<string, unknown> = {};
-    const updateBuilder: any = {};
-    const applyIfMatched = () => {
-      const row = table.find((r) =>
-        Object.entries(updateFilters).every(([col, val]) => r[col] === val)
-      );
-      if (row) {
-        Object.assign(row, data);
-        updateCalls.push({ data, filters: { ...updateFilters } });
-      }
-      return Promise.resolve({ error: null });
+  function makeDocRef(path: string): any {
+    const id = path.split('/').pop()!;
+    return {
+      id,
+      path,
+      async get() {
+        const data = store.get(path);
+        return {
+          exists: data !== undefined,
+          id,
+          data: () => (data ? { ...data } : undefined),
+        };
+      },
+      async create(data: Record<string, unknown>) {
+        createCallCount.set(path, (createCallCount.get(path) ?? 0) + 1);
+        if (store.has(path)) {
+          const err: Error & { code?: number } = new Error(
+            `6 ALREADY_EXISTS: Document already exists: ${path}`
+          );
+          err.code = 6;
+          throw err;
+        }
+        store.set(path, { ...data });
+        return {};
+      },
+      async update(data: Record<string, unknown>) {
+        const existing = store.get(path);
+        if (!existing) {
+          throw new Error(`No document to update at ${path}`);
+        }
+        store.set(path, { ...existing, ...data });
+      },
     };
-    updateBuilder.eq = vi.fn((column: string, value: unknown) => {
-      updateFilters = { ...updateFilters, [column]: value };
-      return updateBuilder;
-    });
-    updateBuilder.is = vi.fn((column: string, value: unknown) => {
-      updateFilters = { ...updateFilters, [column]: value };
-      return applyIfMatched();
-    });
-    return updateBuilder;
-  });
+  }
 
-  builder.getInsertedRows = () => insertedRows;
-  builder.getUpdateCalls = () => updateCalls;
-  builder.getTable = () => table;
-  return builder;
+  function makeCollectionRef(path: string): any {
+    return {
+      path,
+      doc(id: string) {
+        return makeDocRef(`${path}/${id}`);
+      },
+    };
+  }
+
+  const db = {
+    collection(name: string) {
+      return makeCollectionRef(name);
+    },
+  };
+
+  return { db, store, createCallCount };
 }
 
-function makeSupabaseMock(options: { user: { id: string } | null; existingRows?: WordRow[] }) {
-  const words = makeWordsBuilder(options.existingRows ?? []);
+function putWord(store: Map<string, StoredDoc>, wordId: string, data: StoredDoc) {
+  store.set(`words/${wordId}`, { ...data });
+}
 
-  const from = vi.fn((table: string) => {
-    if (table === 'words') return words;
-    throw new Error(`Unexpected table: ${table}`);
-  });
-
-  return {
-    auth: {
-      getUser: vi.fn().mockResolvedValue({ data: { user: options.user }, error: null }),
-    },
-    from,
-    words,
-  } as any;
+function getWord(store: Map<string, StoredDoc>, wordId: string) {
+  return store.get(`words/${wordId}`) as any;
 }
 
 function makeRequest(body: unknown) {
@@ -107,7 +107,8 @@ function makeRequest(body: unknown) {
 }
 
 beforeEach(() => {
-  mockCreateClient.mockReset();
+  mockGetFirestore.mockReset();
+  mockGetAuthedUser.mockReset();
   mockFetchDefinition.mockReset();
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
@@ -119,8 +120,9 @@ afterEach(() => {
 
 describe('POST /api/words/lookup', () => {
   test('returns 401 when there is no authenticated user', async () => {
-    const supabase = makeSupabaseMock({ user: null });
-    mockCreateClient.mockResolvedValue(supabase);
+    mockGetAuthedUser.mockResolvedValue(null);
+    const { db } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
 
     const response = await POST(makeRequest({ word: 'ephemeral' }));
 
@@ -129,18 +131,20 @@ describe('POST /api/words/lookup', () => {
   });
 
   test('returns 400 when the word is missing or has no letters', async () => {
-    const supabase = makeSupabaseMock({ user: { id: 'user-1' } });
-    mockCreateClient.mockResolvedValue(supabase);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
 
     const response = await POST(makeRequest({ word: '  123  ' }));
 
     expect(response.status).toBe(400);
-    expect(supabase.words.insert).not.toHaveBeenCalled();
+    expect(mockFetchDefinition).not.toHaveBeenCalled();
   });
 
-  test('I4: a plain tap-to-define lookup (no add flag) fetches the definition but does not create a row', async () => {
-    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, existingRows: [] });
-    mockCreateClient.mockResolvedValue(supabase);
+  test('a plain lookup (no add flag) never creates a word doc, even for a brand-new word', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
     mockFetchDefinition.mockResolvedValue('lasting a short time');
 
     const response = await POST(makeRequest({ word: 'Ephemeral,' }));
@@ -148,13 +152,14 @@ describe('POST /api/words/lookup', () => {
 
     expect(response.status).toBe(200);
     expect(mockFetchDefinition).toHaveBeenCalledWith('ephemeral');
-    expect(supabase.words.insert).not.toHaveBeenCalled();
     expect(body).toEqual({ word: 'ephemeral', definition: 'lasting a short time' });
+    expect(getWord(store, 'user-1_ephemeral')).toBeUndefined();
   });
 
-  test('I4: add: true on a genuinely new word looks it up and inserts it with SM-2 defaults', async () => {
-    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, existingRows: [] });
-    mockCreateClient.mockResolvedValue(supabase);
+  test('add: true creates a new word doc with SM-2 defaults and no bookId/sectionRefs', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
     mockFetchDefinition.mockResolvedValue('lasting a short time');
 
     const response = await POST(makeRequest({ word: 'Ephemeral,', add: true }));
@@ -162,57 +167,67 @@ describe('POST /api/words/lookup', () => {
 
     expect(response.status).toBe(200);
     expect(mockFetchDefinition).toHaveBeenCalledWith('ephemeral');
-    expect(supabase.words.insert).toHaveBeenCalledWith({
-      user_id: 'user-1',
+    expect(body).toEqual({ word: 'ephemeral', definition: 'lasting a short time' });
+
+    const stored = getWord(store, 'user-1_ephemeral');
+    expect(stored).toMatchObject({
+      userId: 'user-1',
       word: 'ephemeral',
       definition: 'lasting a short time',
+      sectionRefs: [],
       repetitions: 0,
-      ease_factor: 2.5,
-      interval_days: 1,
-      next_review_date: '2026-01-01',
+      easeFactor: 2.5,
+      intervalDays: 1,
+      nextReviewDate: '2026-01-01',
+      lastRating: null,
     });
-    expect(body).toEqual({ word: 'ephemeral', definition: 'lasting a short time' });
+    expect(stored.bookId).toBeUndefined();
   });
 
-  test('a word the user already has returns its existing definition without inserting or re-fetching', async () => {
-    const existingRows = [
-      {
-        id: 'word-1',
-        user_id: 'user-1',
-        word: 'lucid',
-        definition: 'clear and easy to understand',
-        repetitions: 3,
-        ease_factor: 2.8,
-        interval_days: 15,
-      },
-    ];
-    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, existingRows });
-    mockCreateClient.mockResolvedValue(supabase);
+  test('a word the user already has returns its existing definition without re-fetching or overwriting', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    putWord(store, 'user-1_lucid', {
+      userId: 'user-1',
+      word: 'lucid',
+      definition: 'clear and easy to understand',
+      sectionRefs: [{ bookId: 'book-1', sectionId: 'section-1' }],
+      repetitions: 3,
+      easeFactor: 2.8,
+      intervalDays: 15,
+      nextReviewDate: '2026-01-05',
+      lastRating: 'good',
+    });
 
     const response = await POST(makeRequest({ word: 'lucid' }));
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(mockFetchDefinition).not.toHaveBeenCalled();
-    expect(supabase.words.insert).not.toHaveBeenCalled();
     expect(body).toEqual({ word: 'lucid', definition: 'clear and easy to understand' });
+    expect(getWord(store, 'user-1_lucid')).toMatchObject({
+      repetitions: 3,
+      easeFactor: 2.8,
+      intervalDays: 15,
+    });
   });
 
-  test('I4: a stored null definition (a past failed lookup) is retried and backfilled without touching SRS state', async () => {
-    const existingRows = [
-      {
-        id: 'word-1',
-        user_id: 'user-1',
-        word: 'zzzqaa',
-        definition: null,
-        repetitions: 4,
-        ease_factor: 2.9,
-        interval_days: 30,
-        last_rating: 'easy',
-      },
-    ];
-    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, existingRows });
-    mockCreateClient.mockResolvedValue(supabase);
+  test('a stored null definition is retried and backfilled without touching SRS state', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    putWord(store, 'user-1_zzzqaa', {
+      userId: 'user-1',
+      word: 'zzzqaa',
+      definition: null,
+      sectionRefs: [],
+      repetitions: 4,
+      easeFactor: 2.9,
+      intervalDays: 30,
+      nextReviewDate: '2026-01-10',
+      lastRating: 'easy',
+    });
     mockFetchDefinition.mockResolvedValue('a definition at last');
 
     const response = await POST(makeRequest({ word: 'zzzqaa' }));
@@ -221,24 +236,30 @@ describe('POST /api/words/lookup', () => {
     expect(response.status).toBe(200);
     expect(mockFetchDefinition).toHaveBeenCalledWith('zzzqaa');
     expect(body).toEqual({ word: 'zzzqaa', definition: 'a definition at last' });
-    expect(supabase.words.insert).not.toHaveBeenCalled();
-
-    const storedRow = supabase.words.getTable().find((row: any) => row.id === 'word-1');
-    expect(storedRow).toMatchObject({
+    expect(getWord(store, 'user-1_zzzqaa')).toMatchObject({
       definition: 'a definition at last',
       repetitions: 4,
-      ease_factor: 2.9,
-      interval_days: 30,
-      last_rating: 'easy',
+      easeFactor: 2.9,
+      intervalDays: 30,
+      lastRating: 'easy',
     });
   });
 
-  test('I4: a stored null definition that still fails to resolve stays null and is not written', async () => {
-    const existingRows = [
-      { id: 'word-1', user_id: 'user-1', word: 'zzzqbb', definition: null },
-    ];
-    const supabase = makeSupabaseMock({ user: { id: 'user-1' }, existingRows });
-    mockCreateClient.mockResolvedValue(supabase);
+  test('a stored null definition that still fails to resolve stays null and is not written', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    putWord(store, 'user-1_zzzqbb', {
+      userId: 'user-1',
+      word: 'zzzqbb',
+      definition: null,
+      sectionRefs: [],
+      repetitions: 0,
+      easeFactor: 2.5,
+      intervalDays: 1,
+      nextReviewDate: '2026-01-01',
+      lastRating: null,
+    });
     mockFetchDefinition.mockResolvedValue(null);
 
     const response = await POST(makeRequest({ word: 'zzzqbb' }));
@@ -246,6 +267,67 @@ describe('POST /api/words/lookup', () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ word: 'zzzqbb', definition: null });
-    expect(supabase.words.getUpdateCalls()).toHaveLength(0);
+    expect(getWord(store, 'user-1_zzzqbb')).toMatchObject({ definition: null });
+  });
+
+  test("two concurrent add:true calls for the same new word result in one document; the loser transparently gets the winner's data instead of a 500", async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store, createCallCount } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockFetchDefinition.mockResolvedValue('lasting a short time');
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      POST(makeRequest({ word: 'ephemeral', add: true })),
+      POST(makeRequest({ word: 'ephemeral', add: true })),
+    ]);
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+
+    const firstBody = await firstResponse.json();
+    const secondBody = await secondResponse.json();
+
+    expect(firstBody).toEqual({ word: 'ephemeral', definition: 'lasting a short time' });
+    expect(secondBody).toEqual({ word: 'ephemeral', definition: 'lasting a short time' });
+
+    // Only one document ever landed, and both create() attempts were made
+    // (proving the loser actually hit the race rather than short-circuiting
+    // some other way).
+    expect(createCallCount.get('words/user-1_ephemeral')).toBe(2);
+    expect(getWord(store, 'user-1_ephemeral')).toMatchObject({
+      userId: 'user-1',
+      word: 'ephemeral',
+      definition: 'lasting a short time',
+      sectionRefs: [],
+      repetitions: 0,
+    });
+  });
+
+  test('a non-race error from create() surfaces as a 500', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db } = createFakeFirestore();
+    const failingDb = {
+      collection: (name: string) => {
+        const real = db.collection(name);
+        return {
+          ...real,
+          doc(id: string) {
+            const ref = real.doc(id);
+            return {
+              ...ref,
+              async create() {
+                throw new Error('boom');
+              },
+            };
+          },
+        };
+      },
+    };
+    mockGetFirestore.mockReturnValue(failingDb);
+    mockFetchDefinition.mockResolvedValue('lasting a short time');
+
+    const response = await POST(makeRequest({ word: 'ephemeral', add: true }));
+
+    expect(response.status).toBe(500);
   });
 });
