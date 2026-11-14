@@ -133,7 +133,7 @@ function putSection(store: Map<string, StoredDoc>, bookId: string, sectionId: st
   store.set(`books/${bookId}/sections/${sectionId}`, { ...data });
 }
 
-function makeRawText(wordCount: number) {
+function makeSectionText(wordCount: number) {
   return Array.from({ length: wordCount }, () => 'word').join(' ');
 }
 
@@ -149,12 +149,11 @@ describe('ReadPage', () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
     putSection(store, 'book-1', 'section-1', {
       sectionNumber: 1,
       status: 'ready_to_practice',
-      startWordIndex: 0,
-      endWordIndex: 5,
+      text: makeSectionText(5),
     });
 
     await expect(
@@ -168,12 +167,11 @@ describe('ReadPage', () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
     putSection(store, 'book-1', 'section-1', {
       sectionNumber: 1,
       status,
-      startWordIndex: 0,
-      endWordIndex: 5,
+      text: makeSectionText(5),
     });
 
     await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
@@ -181,20 +179,17 @@ describe('ReadPage', () => {
     expect(mockRedirect).not.toHaveBeenCalled();
   });
 
-  test('renders the section text with each word wrapped for tap-to-define', async () => {
+  test('renders the section text from its own `text` field, with each word wrapped for tap-to-define', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-    putBook(store, 'book-1', {
-      userId: 'user-1',
-      title: 'My Book',
-      rawText: 'alpha beta gamma delta epsilon',
-    });
+    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
     putSection(store, 'book-1', 'section-1', {
       sectionNumber: 1,
       status: 'ready_to_read',
-      startWordIndex: 1,
-      endWordIndex: 3,
+      // The page renders straight from this field now — no book-level
+      // rawText or word-index slicing involved (Important #3).
+      text: 'beta gamma',
     });
 
     const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
@@ -211,12 +206,11 @@ describe('ReadPage', () => {
       const { db, store } = createFakeFirestore();
       mockGetFirestore.mockReturnValue(db);
       mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
       putSection(store, 'book-1', 'section-2', {
         sectionNumber: 2,
         status: 'ready_to_read',
-        startWordIndex: 0,
-        endWordIndex: 5,
+        text: makeSectionText(5),
       });
 
       const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '2' }) });
@@ -234,12 +228,11 @@ describe('ReadPage', () => {
       const { db, store } = createFakeFirestore();
       mockGetFirestore.mockReturnValue(db);
       mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
       putSection(store, 'book-1', 'section-1', {
         sectionNumber: 1,
         status: 'ready_to_read',
-        startWordIndex: 0,
-        endWordIndex: 5,
+        text: makeSectionText(5),
       });
 
       const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
@@ -252,18 +245,15 @@ describe('ReadPage', () => {
       const { db, store } = createFakeFirestore();
       mockGetFirestore.mockReturnValue(db);
       mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
       putSection(store, 'book-1', 'section-1', {
         sectionNumber: 1,
         status: 'ready_to_read',
-        startWordIndex: 0,
-        endWordIndex: 5,
+        text: makeSectionText(5),
       });
       putSection(store, 'book-1', 'section-2', {
         sectionNumber: 2,
         status: 'ready_to_practice',
-        startWordIndex: 5,
-        endWordIndex: 10,
       });
 
       const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
@@ -279,18 +269,15 @@ describe('ReadPage', () => {
       const { db, store } = createFakeFirestore();
       mockGetFirestore.mockReturnValue(db);
       mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
       putSection(store, 'book-1', 'section-1', {
         sectionNumber: 1,
         status: 'ready_to_read',
-        startWordIndex: 0,
-        endWordIndex: 5,
+        text: makeSectionText(5),
       });
       putSection(store, 'book-1', 'section-2', {
         sectionNumber: 2,
         status: 'completed',
-        startWordIndex: 5,
-        endWordIndex: 10,
       });
 
       const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
@@ -306,18 +293,15 @@ describe('ReadPage', () => {
       const { db, store } = createFakeFirestore();
       mockGetFirestore.mockReturnValue(db);
       mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
       putSection(store, 'book-1', 'section-1', {
         sectionNumber: 1,
         status: 'ready_to_read',
-        startWordIndex: 0,
-        endWordIndex: 5,
+        text: makeSectionText(5),
       });
       putSection(store, 'book-1', 'section-2', {
         sectionNumber: 2,
         status: 'locked',
-        startWordIndex: 5,
-        endWordIndex: 10,
       });
 
       const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });

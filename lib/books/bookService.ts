@@ -97,12 +97,17 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
   const { title, author, format, rawText, userId } = input;
   const db = getFirestore(getAdminApp());
 
+  // The whole book's flattened text is intentionally NOT stored here.
+  // Firestore caps a single document at 1 MiB, and a long novel's text
+  // (roughly 180k+ words) can exceed that on its own, which would make
+  // this very `.add()` call reject with an opaque error. Each section is
+  // capped at SECTION_SIZE words, so it's always far under the limit —
+  // each section doc below carries its own `text` slice instead.
   const bookRef = await db.collection('books').add({
     userId,
     title,
     author: author ?? null,
     format,
-    rawText,
     createdAt: FieldValue.serverTimestamp(),
   });
   const bookId = bookRef.id;
@@ -123,6 +128,7 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
         sectionNumber: section.sectionNumber,
         startWordIndex: section.startWordIndex,
         endWordIndex: section.endWordIndex,
+        text: section.text,
         status: section.sectionNumber === 1 ? 'ready_to_practice' : 'locked',
         wordIds: [] as string[],
       })

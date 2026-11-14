@@ -9,14 +9,12 @@ import WordPopup from '@/components/WordPopup';
 type BookData = {
   userId: string;
   title: string;
-  rawText: string;
 };
 
 type SectionData = {
   sectionNumber: number;
   status: string;
-  startWordIndex: number;
-  endWordIndex: number;
+  text: string;
 };
 
 export default async function ReadPage({
@@ -87,15 +85,16 @@ export default async function ReadPage({
     }
   }
 
-  // Sections store word-index offsets into the book's flattened raw text
-  // rather than their own copy of the text (same tokenization as
-  // splitIntoSections), so the section's text is recomputed here the same
-  // way it was at ingestion.
-  const words = bookData.rawText
+  // Each section doc carries its own text slice (set at ingestion time by
+  // bookService.addBook) rather than the book doc storing the whole
+  // flattened text — see Important #3: a long novel's full text can exceed
+  // Firestore's 1 MiB per-document limit, while a single 150-word section
+  // never does. No re-tokenization/slicing by word-index range is needed
+  // here any more.
+  const sectionWords = sectionData.text
     .trim()
     .split(/\s+/)
     .filter((w) => w.length > 0);
-  const sectionWords = words.slice(sectionData.startWordIndex, sectionData.endWordIndex);
 
   async function markSectionComplete() {
     'use server';

@@ -188,21 +188,34 @@ describe('addBook', () => {
       title: 'Common Words Book',
       author: null,
       format: 'text',
-      rawText,
     });
     expect(bookDoc.createdAt).toEqual({ __fakeServerTimestamp: true });
+    // Important #3: the book doc must NOT carry the whole book's flattened
+    // text — a long novel's text can exceed Firestore's 1 MiB per-document
+    // limit on its own. Each section doc carries its own slice instead.
+    expect(bookDoc.rawText).toBeUndefined();
 
     const sections = sectionsForBook(store, result.bookId);
     expect(sections).toHaveLength(3);
+    const words = rawText.split(' ');
     expect(sections[0]).toMatchObject({
       sectionNumber: 1,
       startWordIndex: 0,
       endWordIndex: 150,
+      text: words.slice(0, 150).join(' '),
       status: 'ready_to_practice',
       wordIds: [],
     });
-    expect(sections[1]).toMatchObject({ sectionNumber: 2, status: 'locked' });
-    expect(sections[2]).toMatchObject({ sectionNumber: 3, status: 'locked' });
+    expect(sections[1]).toMatchObject({
+      sectionNumber: 2,
+      status: 'locked',
+      text: words.slice(150, 300).join(' '),
+    });
+    expect(sections[2]).toMatchObject({
+      sectionNumber: 3,
+      status: 'locked',
+      text: words.slice(300, 320).join(' '),
+    });
   });
 
   test('a brand-new word is created with the deterministic id `${userId}_${word}` and SM-2 defaults', async () => {
