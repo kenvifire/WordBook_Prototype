@@ -23,11 +23,11 @@ No paid or keyed third-party APIs are required to run this app.
 
 2. **Create a Firebase project**
 
-   Create a new project at the [Firebase console](https://console.firebase.google.com) (the free Spark tier is enough). In the new project, enable:
+   Create a new project at the [Firebase console](https://console.firebase.google.com). Firestore and Authentication are available on the free Spark tier. **Storage is not**: since late 2024, Firebase requires the Blaze (pay-as-you-go) plan to create a new project's default Cloud Storage bucket — on Spark, step 2's "enable Storage" below will be blocked. Blaze has its own free-usage tier, so a small project like this one should still cost nothing in practice, but the project must be upgraded to Blaze before Storage can be enabled. In the new project, enable:
 
    - **Firestore** (Build → Firestore Database → Create database, in production mode)
    - **Authentication** (Build → Authentication → Get started → enable the Email/Password sign-in provider)
-   - **Storage** (Build → Storage → Get started, default bucket)
+   - **Storage** (Build → Storage → Get started, default bucket — requires the Blaze plan, see above)
 
 3. **Deploy the security rules and indexes**
 
