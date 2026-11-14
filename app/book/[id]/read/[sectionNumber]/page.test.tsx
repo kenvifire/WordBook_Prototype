@@ -1,8 +1,14 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn(),
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: vi.fn(),
+}));
+
+vi.mock('@/lib/firebase/admin', () => ({ getAdminApp: vi.fn(() => ({})) }));
+
+vi.mock('@/lib/firebase/server', () => ({
+  getAuthedUser: vi.fn(),
 }));
 
 vi.mock('next/cache', () => ({
@@ -23,168 +29,301 @@ vi.mock('next/navigation', () => ({
   notFound: mockNotFound,
 }));
 
-import { createClient } from '@/lib/supabase/server';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAuthedUser } from '@/lib/firebase/server';
 import ReadPage from './page';
 
-const mockCreateClient = createClient as unknown as ReturnType<typeof vi.fn>;
+const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
+const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
 
-type Row = Record<string, unknown>;
+type StoredDoc = Record<string, unknown>;
 
-function makeBooksBuilder(book: Row | null) {
-  const builder: any = {};
-  builder.select = vi.fn(() => builder);
-  builder.eq = vi.fn(() => builder);
-  builder.single = vi.fn(() =>
-    Promise.resolve({ data: book, error: book ? null : { message: 'no rows' } })
-  );
-  return builder;
-}
+// A minimal fake Firestore, backed by an in-memory Map keyed by full document
+// path, supporting exactly the operations this page needs: doc get, a
+// single-field equality `.where(...).limit(1)` query over a subcollection's
+// direct children, and nested `.collection()` off a doc ref — mirroring the
+// fake-store style already used in app/book/[id]/practice/[sectionNumber]/page.test.tsx.
+function createFakeFirestore() {
+  const store = new Map<string, StoredDoc>();
 
-// Supports the two select shapes the read page issues against `sections`:
-// select().eq('book_id', x).eq('section_number', y).single() for the
-// current section, and the same filters with .maybeSingle() for the next
-// section lookup.
-function makeSectionsBuilder(rows: Row[]) {
-  let filters: Record<string, unknown> = {};
-  const builder: any = {};
-  builder.select = vi.fn(() => {
-    filters = {};
-    return builder;
-  });
-  builder.eq = vi.fn((column: string, value: unknown) => {
-    filters = { ...filters, [column]: value };
-    return builder;
-  });
-  const resolve = () => {
-    const row = rows.find((r) => Object.entries(filters).every(([col, val]) => r[col] === val));
-    return Promise.resolve({ data: row ?? null, error: null });
+  function makeDocRef(path: string): any {
+    const id = path.split('/').pop()!;
+    return {
+      id,
+      path,
+      async get() {
+        const data = store.get(path);
+        return {
+          exists: data !== undefined,
+          id,
+          data: () => (data ? { ...data } : undefined),
+        };
+      },
+      async update(data: Record<string, unknown>) {
+        const existing = store.get(path);
+        if (!existing) {
+          throw new Error(`No document to update at ${path}`);
+        }
+        store.set(path, { ...existing, ...data });
+      },
+      collection(name: string) {
+        return makeCollectionRef(`${path}/${name}`);
+      },
+    };
+  }
+
+  function directChildren(collectionPath: string): [string, StoredDoc][] {
+    const prefix = `${collectionPath}/`;
+    return Array.from(store.entries()).filter(
+      ([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/')
+    );
+  }
+
+  function makeQuery(collectionPath: string, filters: { field: string; value: unknown }[], limitN?: number) {
+    return {
+      where(field: string, _op: '==', value: unknown) {
+        return makeQuery(collectionPath, [...filters, { field, value }], limitN);
+      },
+      limit(n: number) {
+        return makeQuery(collectionPath, filters, n);
+      },
+      async get() {
+        let matches = directChildren(collectionPath).filter(([, data]) =>
+          filters.every((f) => data[f.field] === f.value)
+        );
+        if (limitN !== undefined) {
+          matches = matches.slice(0, limitN);
+        }
+        const docs = matches.map(([path, data]) => ({
+          id: path.split('/').pop()!,
+          ref: makeDocRef(path),
+          data: () => ({ ...data }),
+        }));
+        return { empty: docs.length === 0, docs };
+      },
+    };
+  }
+
+  function makeCollectionRef(path: string): any {
+    return {
+      path,
+      doc(id: string) {
+        return makeDocRef(`${path}/${id}`);
+      },
+      where(field: string, op: '==', value: unknown) {
+        return makeQuery(path, [{ field, value }]);
+      },
+    };
+  }
+
+  const db = {
+    collection(name: string) {
+      return makeCollectionRef(name);
+    },
   };
-  builder.single = vi.fn(resolve);
-  builder.maybeSingle = vi.fn(resolve);
-  return builder;
+
+  return { db, store };
 }
 
-function makeSupabaseMock(options: { user: { id: string } | null; book: Row | null; sections: Row[] }) {
-  const books = makeBooksBuilder(options.book);
-  const sections = makeSectionsBuilder(options.sections);
+function putBook(store: Map<string, StoredDoc>, bookId: string, data: StoredDoc) {
+  store.set(`books/${bookId}`, { ...data });
+}
 
-  const from = vi.fn((table: string) => {
-    switch (table) {
-      case 'books':
-        return books;
-      case 'sections':
-        return sections;
-      default:
-        throw new Error(`Unexpected table: ${table}`);
-    }
-  });
+function putSection(store: Map<string, StoredDoc>, bookId: string, sectionId: string, data: StoredDoc) {
+  store.set(`books/${bookId}/sections/${sectionId}`, { ...data });
+}
 
-  return {
-    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: options.user }, error: null }) },
-    from,
-    books,
-    sections,
-  } as any;
+function makeRawText(wordCount: number) {
+  return Array.from({ length: wordCount }, () => 'word').join(' ');
 }
 
 beforeEach(() => {
   mockRedirect.mockClear();
   mockNotFound.mockClear();
-  mockCreateClient.mockReset();
+  mockGetFirestore.mockReset();
+  mockGetAuthedUser.mockReset();
 });
 
-describe('ReadPage prev/next navigation (I3)', () => {
-  test('shows a previous-section link once past section 1, and no next-section link when there is no next section', async () => {
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      book: { id: 'book-1', title: 'My Book', raw_text: Array.from({ length: 10 }, () => 'word').join(' ') },
-      sections: [
-        { id: 'section-2', book_id: 'book-1', section_number: 2, status: 'ready_to_read', start_word_index: 0, end_word_index: 5 },
-      ],
+describe('ReadPage', () => {
+  test('redirects to the book page unless the section status is ready_to_read or completed', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'ready_to_practice',
+      startWordIndex: 0,
+      endWordIndex: 5,
     });
-    mockCreateClient.mockResolvedValue(supabase);
 
-    const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '2' }) });
-    render(jsx);
+    await expect(
+      ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) })
+    ).rejects.toThrow('NEXT_REDIRECT:/book/book-1');
 
-    expect(screen.getByRole('link', { name: '← Previous section' })).toHaveAttribute(
-      'href',
-      '/book/book-1/read/1'
-    );
-    expect(screen.queryByRole('link', { name: 'Next section →' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Back to book' })).toHaveAttribute('href', '/book/book-1');
+    expect(mockRedirect).toHaveBeenCalledWith('/book/book-1');
   });
 
-  test('has no previous-section link on section 1', async () => {
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      book: { id: 'book-1', title: 'My Book', raw_text: Array.from({ length: 10 }, () => 'word').join(' ') },
-      sections: [
-        { id: 'section-1', book_id: 'book-1', section_number: 1, status: 'ready_to_read', start_word_index: 0, end_word_index: 5 },
-      ],
+  test.each(['ready_to_read', 'completed'])('does not redirect when status is %s', async (status) => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status,
+      startWordIndex: 0,
+      endWordIndex: 5,
     });
-    mockCreateClient.mockResolvedValue(supabase);
+
+    await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+
+    expect(mockRedirect).not.toHaveBeenCalled();
+  });
+
+  test('renders the section text with each word wrapped for tap-to-define', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', {
+      userId: 'user-1',
+      title: 'My Book',
+      rawText: 'alpha beta gamma delta epsilon',
+    });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'ready_to_read',
+      startWordIndex: 1,
+      endWordIndex: 3,
+    });
 
     const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
     render(jsx);
 
-    expect(screen.queryByRole('link', { name: '← Previous section' })).not.toBeInTheDocument();
+    expect(screen.getByText('beta')).toBeInTheDocument();
+    expect(screen.getByText('gamma')).toBeInTheDocument();
+    expect(screen.queryByText('alpha')).not.toBeInTheDocument();
+    expect(screen.queryByText('delta')).not.toBeInTheDocument();
   });
 
-  test('links next section to its practice page when it is only ready_to_practice', async () => {
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      book: { id: 'book-1', title: 'My Book', raw_text: Array.from({ length: 10 }, () => 'word').join(' ') },
-      sections: [
-        { id: 'section-1', book_id: 'book-1', section_number: 1, status: 'ready_to_read', start_word_index: 0, end_word_index: 5 },
-        { id: 'section-2', book_id: 'book-1', section_number: 2, status: 'ready_to_practice', start_word_index: 5, end_word_index: 10 },
-      ],
+  describe('prev/next navigation (I3)', () => {
+    test('shows a previous-section link once past section 1, and no next-section link when there is no next section', async () => {
+      const { db, store } = createFakeFirestore();
+      mockGetFirestore.mockReturnValue(db);
+      mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+      putSection(store, 'book-1', 'section-2', {
+        sectionNumber: 2,
+        status: 'ready_to_read',
+        startWordIndex: 0,
+        endWordIndex: 5,
+      });
+
+      const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '2' }) });
+      render(jsx);
+
+      expect(screen.getByRole('link', { name: '← Previous section' })).toHaveAttribute(
+        'href',
+        '/book/book-1/read/1'
+      );
+      expect(screen.queryByRole('link', { name: 'Next section →' })).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Back to book' })).toHaveAttribute('href', '/book/book-1');
     });
-    mockCreateClient.mockResolvedValue(supabase);
 
-    const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
-    render(jsx);
+    test('has no previous-section link on section 1', async () => {
+      const { db, store } = createFakeFirestore();
+      mockGetFirestore.mockReturnValue(db);
+      mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+      putSection(store, 'book-1', 'section-1', {
+        sectionNumber: 1,
+        status: 'ready_to_read',
+        startWordIndex: 0,
+        endWordIndex: 5,
+      });
 
-    expect(screen.getByRole('link', { name: 'Next section →' })).toHaveAttribute(
-      'href',
-      '/book/book-1/practice/2'
-    );
-  });
+      const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+      render(jsx);
 
-  test('links next section to its read page when it is ready_to_read or completed', async () => {
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      book: { id: 'book-1', title: 'My Book', raw_text: Array.from({ length: 10 }, () => 'word').join(' ') },
-      sections: [
-        { id: 'section-1', book_id: 'book-1', section_number: 1, status: 'ready_to_read', start_word_index: 0, end_word_index: 5 },
-        { id: 'section-2', book_id: 'book-1', section_number: 2, status: 'completed', start_word_index: 5, end_word_index: 10 },
-      ],
+      expect(screen.queryByRole('link', { name: '← Previous section' })).not.toBeInTheDocument();
     });
-    mockCreateClient.mockResolvedValue(supabase);
 
-    const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
-    render(jsx);
+    test('links next section to its practice page when it is only ready_to_practice', async () => {
+      const { db, store } = createFakeFirestore();
+      mockGetFirestore.mockReturnValue(db);
+      mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+      putSection(store, 'book-1', 'section-1', {
+        sectionNumber: 1,
+        status: 'ready_to_read',
+        startWordIndex: 0,
+        endWordIndex: 5,
+      });
+      putSection(store, 'book-1', 'section-2', {
+        sectionNumber: 2,
+        status: 'ready_to_practice',
+        startWordIndex: 5,
+        endWordIndex: 10,
+      });
 
-    expect(screen.getByRole('link', { name: 'Next section →' })).toHaveAttribute(
-      'href',
-      '/book/book-1/read/2'
-    );
-  });
+      const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+      render(jsx);
 
-  test('no next-section link when the next section is still locked', async () => {
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      book: { id: 'book-1', title: 'My Book', raw_text: Array.from({ length: 10 }, () => 'word').join(' ') },
-      sections: [
-        { id: 'section-1', book_id: 'book-1', section_number: 1, status: 'ready_to_read', start_word_index: 0, end_word_index: 5 },
-        { id: 'section-2', book_id: 'book-1', section_number: 2, status: 'locked', start_word_index: 5, end_word_index: 10 },
-      ],
+      expect(screen.getByRole('link', { name: 'Next section →' })).toHaveAttribute(
+        'href',
+        '/book/book-1/practice/2'
+      );
     });
-    mockCreateClient.mockResolvedValue(supabase);
 
-    const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
-    render(jsx);
+    test('links next section to its read page when it is ready_to_read or completed', async () => {
+      const { db, store } = createFakeFirestore();
+      mockGetFirestore.mockReturnValue(db);
+      mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+      putSection(store, 'book-1', 'section-1', {
+        sectionNumber: 1,
+        status: 'ready_to_read',
+        startWordIndex: 0,
+        endWordIndex: 5,
+      });
+      putSection(store, 'book-1', 'section-2', {
+        sectionNumber: 2,
+        status: 'completed',
+        startWordIndex: 5,
+        endWordIndex: 10,
+      });
 
-    expect(screen.queryByRole('link', { name: 'Next section →' })).not.toBeInTheDocument();
+      const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+      render(jsx);
+
+      expect(screen.getByRole('link', { name: 'Next section →' })).toHaveAttribute(
+        'href',
+        '/book/book-1/read/2'
+      );
+    });
+
+    test('no next-section link when the next section is still locked', async () => {
+      const { db, store } = createFakeFirestore();
+      mockGetFirestore.mockReturnValue(db);
+      mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', rawText: makeRawText(10) });
+      putSection(store, 'book-1', 'section-1', {
+        sectionNumber: 1,
+        status: 'ready_to_read',
+        startWordIndex: 0,
+        endWordIndex: 5,
+      });
+      putSection(store, 'book-1', 'section-2', {
+        sectionNumber: 2,
+        status: 'locked',
+        startWordIndex: 5,
+        endWordIndex: 10,
+      });
+
+      const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+      render(jsx);
+
+      expect(screen.queryByRole('link', { name: 'Next section →' })).not.toBeInTheDocument();
+    });
   });
 });

@@ -1,21 +1,22 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAdminApp } from '@/lib/firebase/admin';
+import { getAuthedUser } from '@/lib/firebase/server';
 import WordPopup from '@/components/WordPopup';
 
-type Book = {
-  id: string;
+type BookData = {
+  userId: string;
   title: string;
-  raw_text: string;
+  rawText: string;
 };
 
-type SectionRow = {
-  id: string;
-  section_number: number;
+type SectionData = {
+  sectionNumber: number;
   status: string;
-  start_word_index: number;
-  end_word_index: number;
+  startWordIndex: number;
+  endWordIndex: number;
 };
 
 export default async function ReadPage({
@@ -25,95 +26,93 @@ export default async function ReadPage({
 }) {
   const { id, sectionNumber } = await params;
 
-  const supabase = await createClient();
-  const { data: userData } = await supabase.auth.getUser();
-  const user = userData.user;
+  const user = await getAuthedUser();
 
   if (!user) {
     redirect('/login');
   }
 
-  const { data: book } = await supabase
-    .from('books')
-    .select('id, title, raw_text')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .single();
+  const db = getFirestore(getAdminApp());
+  const bookRef = db.collection('books').doc(id);
+  const bookSnap = await bookRef.get();
+  const bookData = bookSnap.data() as BookData | undefined;
 
-  if (!book) {
+  if (!bookSnap.exists || !bookData || bookData.userId !== user.uid) {
     notFound();
   }
 
-  const { data: section } = await supabase
-    .from('sections')
-    .select('id, section_number, status, start_word_index, end_word_index')
-    .eq('book_id', id)
-    .eq('section_number', Number(sectionNumber))
-    .single();
+  const sectionsQuery = await bookRef
+    .collection('sections')
+    .where('sectionNumber', '==', Number(sectionNumber))
+    .limit(1)
+    .get();
 
-  if (!section) {
+  if (sectionsQuery.empty) {
     notFound();
   }
 
-  const typedBook = book as Book;
-  const typedSection = section as SectionRow;
+  const sectionDoc = sectionsQuery.docs[0];
+  const sectionId = sectionDoc.id;
+  const sectionData = sectionDoc.data() as SectionData;
 
   // The reader is only reachable once reading has unlocked for this section
   // (the spec's "only reachable once unlocked" rule) — a direct URL visit to
   // a still-locked or practice-only section bounces back to the book page.
-  if (typedSection.status !== 'ready_to_read' && typedSection.status !== 'completed') {
+  if (sectionData.status !== 'ready_to_read' && sectionData.status !== 'completed') {
     redirect(`/book/${id}`);
   }
 
   // I3: simple prev/next navigation. Previous always exists once section 1
-  // is passed (just link back one section number). Next only gets a link
-  // when the next section has progressed at least to ready_to_practice —
-  // i.e. it's reachable by some page — pointing at its practice page or its
-  // read page depending on how far it's gotten.
-  const previousSectionNumber =
-    typedSection.section_number > 1 ? typedSection.section_number - 1 : null;
+  // is passed (just link back one section number) — a section readable now
+  // was necessarily practiced-and-unlocked in order, so the previous one
+  // must already be at least readable too. Next only gets a link when the
+  // next section has progressed at least to ready_to_practice — i.e. it's
+  // reachable by some page — pointing at its practice page or its read page
+  // depending on how far it's gotten.
+  const previousSectionNumber = sectionData.sectionNumber > 1 ? sectionData.sectionNumber - 1 : null;
 
-  const { data: nextSection } = await supabase
-    .from('sections')
-    .select('section_number, status')
-    .eq('book_id', id)
-    .eq('section_number', typedSection.section_number + 1)
-    .maybeSingle();
+  const nextSectionQuery = await bookRef
+    .collection('sections')
+    .where('sectionNumber', '==', sectionData.sectionNumber + 1)
+    .limit(1)
+    .get();
 
   let nextSectionHref: string | null = null;
-  if (nextSection) {
-    const nextStatus = (nextSection as { status: string }).status;
+  if (!nextSectionQuery.empty) {
+    const nextStatus = (nextSectionQuery.docs[0].data() as { status: string }).status;
     if (nextStatus === 'ready_to_practice') {
-      nextSectionHref = `/book/${id}/practice/${typedSection.section_number + 1}`;
+      nextSectionHref = `/book/${id}/practice/${sectionData.sectionNumber + 1}`;
     } else if (nextStatus === 'ready_to_read' || nextStatus === 'completed') {
-      nextSectionHref = `/book/${id}/read/${typedSection.section_number + 1}`;
+      nextSectionHref = `/book/${id}/read/${sectionData.sectionNumber + 1}`;
     }
   }
 
-  // Sections store word-index offsets into the book's raw text rather than
-  // their own copy of the text (same tokenization as splitIntoSections), so
-  // the section's text is recomputed here the same way it was at ingestion.
-  const words = typedBook.raw_text
+  // Sections store word-index offsets into the book's flattened raw text
+  // rather than their own copy of the text (same tokenization as
+  // splitIntoSections), so the section's text is recomputed here the same
+  // way it was at ingestion.
+  const words = bookData.rawText
     .trim()
     .split(/\s+/)
     .filter((w) => w.length > 0);
-  const sectionWords = words.slice(typedSection.start_word_index, typedSection.end_word_index);
+  const sectionWords = words.slice(sectionData.startWordIndex, sectionData.endWordIndex);
 
   async function markSectionComplete() {
     'use server';
 
-    const supabase = await createClient();
-    const { data: userData } = await supabase.auth.getUser();
-    const user = userData.user;
+    const actingUser = await getAuthedUser();
 
-    if (!user) {
+    if (!actingUser) {
       redirect('/login');
     }
 
-    await supabase
-      .from('sections')
-      .update({ status: 'completed' })
-      .eq('id', typedSection.id);
+    const actingDb = getFirestore(getAdminApp());
+    await actingDb
+      .collection('books')
+      .doc(id)
+      .collection('sections')
+      .doc(sectionId)
+      .update({ status: 'completed' });
 
     revalidatePath(`/book/${id}`);
     redirect(`/book/${id}`);
@@ -122,7 +121,7 @@ export default async function ReadPage({
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-8">
       <h1 className="text-xl font-semibold">
-        {typedBook.title} — Section {typedSection.section_number}
+        {bookData.title} — Section {sectionData.sectionNumber}
       </h1>
 
       <p className="leading-loose">
@@ -141,10 +140,7 @@ export default async function ReadPage({
 
       <nav className="flex items-center justify-between border-t pt-4 text-sm">
         {previousSectionNumber ? (
-          <Link
-            href={`/book/${id}/read/${previousSectionNumber}`}
-            className="font-medium underline"
-          >
+          <Link href={`/book/${id}/read/${previousSectionNumber}`} className="font-medium underline">
             ← Previous section
           </Link>
         ) : (
