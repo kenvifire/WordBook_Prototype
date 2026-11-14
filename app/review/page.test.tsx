@@ -1,8 +1,14 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn(),
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: vi.fn(),
+}));
+
+vi.mock('@/lib/firebase/admin', () => ({ getAdminApp: vi.fn(() => ({})) }));
+
+vi.mock('@/lib/firebase/server', () => ({
+  getAuthedUser: vi.fn(),
 }));
 
 const { mockRedirect } = vi.hoisted(() => ({
@@ -15,94 +21,81 @@ vi.mock('next/navigation', () => ({
   redirect: mockRedirect,
 }));
 
-import { createClient } from '@/lib/supabase/server';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAuthedUser } from '@/lib/firebase/server';
 import ReviewPage from './page';
 
-const mockCreateClient = createClient as unknown as ReturnType<typeof vi.fn>;
+const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
+const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
 
-type Row = Record<string, unknown>;
+type WordRow = Record<string, unknown>;
 
-// Mirrors the real `.or('last_rating.not.is.null,book_id.is.null')`
-// semantics against an in-memory table, so this test exercises the actual
-// filter the regression fix depends on rather than a mock that always
-// returns everything.
-function makeWordsBuilder(rows: Row[]) {
-  const builder: any = {};
-  let userId: unknown;
-  let maxDate: unknown;
-  let orClause: string | undefined;
+// A minimal fake Firestore supporting exactly the query this page issues:
+// `words` collection, `.where('userId', '==', uid).where('nextReviewDate',
+// '<=', today).orderBy('nextReviewDate')`. The `sectionRefs.length === 0 ||
+// lastRating !== null` carve-out is applied in application code by the page
+// itself, so this fake only needs to honor the Firestore-native filters —
+// the regression-fix behavior is exercised through the page, not the fake.
+function createFakeFirestore(words: WordRow[]) {
+  function makeQuery(filters: { field: string; op: string; value: unknown }[]) {
+    return {
+      where(field: string, op: string, value: unknown) {
+        return makeQuery([...filters, { field, op, value }]);
+      },
+      orderBy() {
+        return this;
+      },
+      async get() {
+        const docs = words
+          .filter((row) =>
+            filters.every((f) => {
+              const actual = row[f.field];
+              if (f.op === '==') return actual === f.value;
+              if (f.op === '<=') return (actual as string) <= (f.value as string);
+              throw new Error(`Unsupported op in fake: ${f.op}`);
+            })
+          )
+          .map((row) => ({
+            id: row.id as string,
+            data: () => ({ ...row }),
+          }));
+        return { empty: docs.length === 0, docs };
+      },
+    };
+  }
 
-  builder.select = vi.fn(() => builder);
-  builder.eq = vi.fn((column: string, value: unknown) => {
-    if (column === 'user_id') userId = value;
-    return builder;
-  });
-  builder.lte = vi.fn((column: string, value: unknown) => {
-    if (column === 'next_review_date') maxDate = value;
-    return builder;
-  });
-  builder.or = vi.fn((clause: string) => {
-    orClause = clause;
-    return builder;
-  });
-  // `.order()` is the terminal call in the real query (the whole chain is
-  // awaited), so it's where this mock actually applies every filter.
-  builder.order = vi.fn(() => {
-    const data = rows.filter((row) => {
-      if (row.user_id !== userId) return false;
-      if (maxDate !== undefined && (row.next_review_date as string) > (maxDate as string)) return false;
-      if (!orClause) return true;
-      const conditions = orClause.split(',');
-      return conditions.some((cond) => {
-        if (cond === 'last_rating.not.is.null') return row.last_rating !== null;
-        if (cond === 'book_id.is.null') return row.book_id === null;
-        return false;
-      });
-    });
-    return Promise.resolve({ data, error: null });
-  });
-  return builder;
-}
-
-function makeSupabaseMock(options: { user: { id: string } | null; words: Row[] }) {
-  const words = makeWordsBuilder(options.words);
-  const from = vi.fn((table: string) => {
-    if (table === 'words') return words;
-    throw new Error(`Unexpected table: ${table}`);
-  });
-
-  return {
-    auth: {
-      getUser: vi.fn().mockResolvedValue({ data: { user: options.user }, error: null }),
+  const db = {
+    collection(name: string) {
+      if (name !== 'words') throw new Error(`Unexpected collection: ${name}`);
+      return makeQuery([]);
     },
-    from,
-    words,
-  } as any;
+  };
+
+  return db;
 }
 
 beforeEach(() => {
   mockRedirect.mockClear();
-  mockCreateClient.mockReset();
+  mockGetFirestore.mockReset();
+  mockGetAuthedUser.mockReset();
 });
 
 describe('ReviewPage', () => {
-  test('I9 regression: a word added via "Add to my vocabulary" (no book_id, never rated) still appears', async () => {
+  test('I9 regression: a word added via "Add to my vocabulary" (no bookId, never rated) still appears', async () => {
     const today = new Date().toISOString().slice(0, 10);
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      words: [
-        {
-          id: 'word-1',
-          word: 'serendipity',
-          definition: 'a fortunate accident',
-          user_id: 'user-1',
-          book_id: null,
-          last_rating: null,
-          next_review_date: today,
-        },
-      ],
-    });
-    mockCreateClient.mockResolvedValue(supabase);
+    const db = createFakeFirestore([
+      {
+        id: 'word-1',
+        userId: 'user-1',
+        word: 'serendipity',
+        definition: 'a fortunate accident',
+        sectionRefs: [],
+        lastRating: null,
+        nextReviewDate: today,
+      },
+    ]);
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
 
     const jsx = await ReviewPage();
     render(jsx);
@@ -110,23 +103,21 @@ describe('ReviewPage', () => {
     expect(screen.getByText('serendipity')).toBeInTheDocument();
   });
 
-  test('a never-rated word that DOES belong to a book is still excluded (I9 original fix)', async () => {
+  test('a never-rated word that DOES belong to a book is excluded', async () => {
     const today = new Date().toISOString().slice(0, 10);
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      words: [
-        {
-          id: 'word-1',
-          word: 'ephemeral',
-          definition: 'lasting a short time',
-          user_id: 'user-1',
-          book_id: 'book-1',
-          last_rating: null,
-          next_review_date: today,
-        },
-      ],
-    });
-    mockCreateClient.mockResolvedValue(supabase);
+    const db = createFakeFirestore([
+      {
+        id: 'word-1',
+        userId: 'user-1',
+        word: 'ephemeral',
+        definition: 'lasting a short time',
+        sectionRefs: [{ bookId: 'book-1', sectionId: 'section-1' }],
+        lastRating: null,
+        nextReviewDate: today,
+      },
+    ]);
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
 
     const jsx = await ReviewPage();
     render(jsx);
@@ -134,27 +125,55 @@ describe('ReviewPage', () => {
     expect(screen.queryByText('ephemeral')).not.toBeInTheDocument();
   });
 
-  test('a rated word from a book still appears (unaffected by the exception)', async () => {
+  test('a rated word from a book still appears', async () => {
     const today = new Date().toISOString().slice(0, 10);
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      words: [
-        {
-          id: 'word-1',
-          word: 'luminous',
-          definition: 'giving off light',
-          user_id: 'user-1',
-          book_id: 'book-1',
-          last_rating: 'good',
-          next_review_date: today,
-        },
-      ],
-    });
-    mockCreateClient.mockResolvedValue(supabase);
+    const db = createFakeFirestore([
+      {
+        id: 'word-1',
+        userId: 'user-1',
+        word: 'luminous',
+        definition: 'giving off light',
+        sectionRefs: [{ bookId: 'book-1', sectionId: 'section-1' }],
+        lastRating: 'good',
+        nextReviewDate: today,
+      },
+    ]);
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
 
     const jsx = await ReviewPage();
     render(jsx);
 
     expect(screen.getByText('luminous')).toBeInTheDocument();
+  });
+
+  test('redirects to /login when there is no authed user', async () => {
+    mockGetAuthedUser.mockResolvedValue(null);
+
+    await expect(ReviewPage()).rejects.toThrow('NEXT_REDIRECT:/login');
+
+    expect(mockRedirect).toHaveBeenCalledWith('/login');
+  });
+
+  test('a word past its due date (nextReviewDate in the future) is excluded', async () => {
+    const future = '2099-01-01';
+    const db = createFakeFirestore([
+      {
+        id: 'word-1',
+        userId: 'user-1',
+        word: 'nebulous',
+        definition: 'unclear',
+        sectionRefs: [],
+        lastRating: 'good',
+        nextReviewDate: future,
+      },
+    ]);
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const jsx = await ReviewPage();
+    render(jsx);
+
+    expect(screen.queryByText('nebulous')).not.toBeInTheDocument();
   });
 });
