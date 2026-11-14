@@ -1,8 +1,16 @@
 import { notFound, redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAdminApp } from '@/lib/firebase/admin';
+import { getAuthedUser } from '@/lib/firebase/server';
 import PracticeSession from '@/components/PracticeSession';
 import type { FlashcardWord } from '@/components/Flashcard';
 import { maybeUnlockNextSection } from '@/lib/sections/sectionService';
+
+type SectionData = {
+  sectionNumber: number;
+  status: string;
+  wordIds?: string[];
+};
 
 export default async function PracticePage({
   params,
@@ -11,49 +19,43 @@ export default async function PracticePage({
 }) {
   const { id, sectionNumber } = await params;
 
-  const supabase = await createClient();
-  const { data: userData } = await supabase.auth.getUser();
-  const user = userData.user;
+  const user = await getAuthedUser();
 
   if (!user) {
     redirect('/login');
   }
 
-  const { data: book } = await supabase
-    .from('books')
-    .select('id')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .single();
+  const db = getFirestore(getAdminApp());
+  const bookRef = db.collection('books').doc(id);
+  const bookSnap = await bookRef.get();
+  const bookData = bookSnap.data() as { userId: string } | undefined;
 
-  if (!book) {
+  if (!bookSnap.exists || !bookData || bookData.userId !== user.uid) {
     notFound();
   }
 
-  const { data: section } = await supabase
-    .from('sections')
-    .select('id, section_number, status')
-    .eq('book_id', id)
-    .eq('section_number', Number(sectionNumber))
-    .single();
+  const sectionsQuery = await bookRef
+    .collection('sections')
+    .where('sectionNumber', '==', Number(sectionNumber))
+    .limit(1)
+    .get();
 
-  if (!section) {
+  if (sectionsQuery.empty) {
     notFound();
   }
+
+  const sectionDoc = sectionsQuery.docs[0];
+  const sectionId = sectionDoc.id;
+  let sectionData = sectionDoc.data() as SectionData;
 
   // A locked section hasn't been reached yet — only a direct URL visit could
   // land here. ready_to_practice/ready_to_read/completed are all still
   // practiceable, since re-practicing a section is fine.
-  if (section.status === 'locked') {
+  if (sectionData.status === 'locked') {
     redirect(`/book/${id}`);
   }
 
-  const { data: sectionWordRows } = await supabase
-    .from('section_words')
-    .select('word_id')
-    .eq('section_id', section.id);
-
-  const wordIds = ((sectionWordRows ?? []) as { word_id: string }[]).map((row) => row.word_id);
+  const wordIds = sectionData.wordIds ?? [];
 
   // C1: a section with zero vocabulary words (e.g. a short all-common tail
   // like "The End.") has nothing to rate, so the rate route's unlock check
@@ -62,37 +64,35 @@ export default async function PracticePage({
   // instead, then re-check this section's status: if it just unlocked,
   // there's nothing to practice, so send the learner back to the book page.
   if (wordIds.length === 0) {
-    await maybeUnlockNextSection(supabase, section.id);
+    await maybeUnlockNextSection(id, sectionId);
 
-    const { data: refreshedSection } = await supabase
-      .from('sections')
-      .select('status')
-      .eq('id', section.id)
-      .single();
+    const refreshedSnap = await bookRef.collection('sections').doc(sectionId).get();
+    const refreshedData = refreshedSnap.data() as SectionData | undefined;
 
-    if (refreshedSection && refreshedSection.status !== section.status) {
+    if (refreshedData && refreshedData.status !== sectionData.status) {
       redirect(`/book/${id}`);
     }
   }
 
   // This page's job is "practice this section until it unlocks," not
   // spaced-repetition scheduling — so it always shows every word in the
-  // section regardless of next_review_date. Due-date filtering belongs on
-  // the future global review page instead.
+  // section regardless of nextReviewDate. Due-date filtering belongs on the
+  // future global review page instead.
   let words: FlashcardWord[] = [];
   if (wordIds.length > 0) {
-    const { data: wordRows } = await supabase
-      .from('words')
-      .select('id, word, definition')
-      .in('id', wordIds)
-      .eq('user_id', user.id);
-
-    words = (wordRows ?? []) as FlashcardWord[];
+    const wordsCollection = db.collection('words');
+    const wordSnapshots = await Promise.all(wordIds.map((wordId) => wordsCollection.doc(wordId).get()));
+    words = wordSnapshots
+      .filter((snap) => snap.exists)
+      .map((snap) => {
+        const data = snap.data() as { word: string; definition: string | null };
+        return { id: snap.id, word: data.word, definition: data.definition ?? null };
+      });
   }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-xl flex-col gap-6 px-4 py-8">
-      <h1 className="text-xl font-semibold">Practice: Section {section.section_number}</h1>
+      <h1 className="text-xl font-semibold">Practice: Section {sectionData.sectionNumber}</h1>
       <PracticeSession
         words={words}
         doneMessage="Done — check back on the book page."

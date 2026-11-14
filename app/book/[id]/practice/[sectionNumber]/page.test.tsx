@@ -1,8 +1,14 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: vi.fn(),
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: vi.fn(),
+}));
+
+vi.mock('@/lib/firebase/admin', () => ({ getAdminApp: vi.fn(() => ({})) }));
+
+vi.mock('@/lib/firebase/server', () => ({
+  getAuthedUser: vi.fn(),
 }));
 
 vi.mock('@/lib/sections/sectionService', () => ({
@@ -23,131 +29,146 @@ vi.mock('next/navigation', () => ({
   notFound: mockNotFound,
 }));
 
-import { createClient } from '@/lib/supabase/server';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAuthedUser } from '@/lib/firebase/server';
 import { maybeUnlockNextSection } from '@/lib/sections/sectionService';
 import PracticePage from './page';
 
-const mockCreateClient = createClient as unknown as ReturnType<typeof vi.fn>;
+const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
+const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
 const mockMaybeUnlockNextSection = maybeUnlockNextSection as unknown as ReturnType<typeof vi.fn>;
 
-type Row = Record<string, unknown>;
+type StoredDoc = Record<string, unknown>;
 
-// Generic chainable builder: select()/eq()*/single() resolves against an
-// in-memory table filtered by every .eq() call so far, matching the
-// chain-mocking style already used in lib/sections/sectionService.test.ts
-// and app/api/words/[wordId]/rate/route.test.ts.
-function makeSingleRowBuilder(table: Row[]) {
-  let filters: Record<string, unknown> = {};
-  const builder: any = {};
-  builder.select = vi.fn(() => {
-    filters = {};
-    return builder;
-  });
-  builder.eq = vi.fn((column: string, value: unknown) => {
-    filters = { ...filters, [column]: value };
-    return builder;
-  });
-  builder.single = vi.fn(() => {
-    const row = table.find((r) => Object.entries(filters).every(([col, val]) => r[col] === val));
-    // Return a fresh shallow copy, not the live row reference: a real
-    // Supabase client hands back a brand-new object per query, so a later
-    // mutation to the stored row (e.g. simulating maybeUnlockNextSection's
-    // real update) must not retroactively change an earlier .single() result
-    // that the caller already destructured.
-    return Promise.resolve({ data: row ? { ...row } : null, error: row ? null : { message: 'no rows' } });
-  });
-  return builder;
-}
+// A minimal fake Firestore, backed by an in-memory Map keyed by full document
+// path, supporting exactly the operations this page needs: doc get, a
+// single-field equality `.where(...).limit(1)` query over a subcollection's
+// direct children, and nested `.collection()` off a doc ref — mirroring the
+// fake-store style already used in lib/sections/sectionService.test.ts and
+// app/api/words/[wordId]/rate/route.test.ts.
+function createFakeFirestore() {
+  const store = new Map<string, StoredDoc>();
 
-function makeSectionWordsBuilder(rows: { section_id: string; word_id: string }[]) {
-  const builder: any = {};
-  builder.select = vi.fn(() => builder);
-  builder.eq = vi.fn((_column: string, value: string) => {
-    const data = rows.filter((row) => row.section_id === value);
-    return Promise.resolve({ data, error: null });
-  });
-  return builder;
-}
+  function makeDocRef(path: string): any {
+    const id = path.split('/').pop()!;
+    return {
+      id,
+      path,
+      async get() {
+        const data = store.get(path);
+        return {
+          exists: data !== undefined,
+          id,
+          data: () => (data ? { ...data } : undefined),
+        };
+      },
+      async update(data: Record<string, unknown>) {
+        const existing = store.get(path);
+        if (!existing) {
+          throw new Error(`No document to update at ${path}`);
+        }
+        store.set(path, { ...existing, ...data });
+      },
+      collection(name: string) {
+        return makeCollectionRef(`${path}/${name}`);
+      },
+    };
+  }
 
-function makeWordsBuilder(rows: Row[]) {
-  const builder: any = {};
-  let ids: string[] = [];
-  builder.select = vi.fn(() => builder);
-  builder.in = vi.fn((_column: string, values: string[]) => {
-    ids = values;
-    return builder;
-  });
-  builder.eq = vi.fn((_column: string, _value: string) => {
-    const data = rows.filter((row) => ids.includes(row.id as string));
-    return Promise.resolve({ data, error: null });
-  });
-  return builder;
-}
+  function directChildren(collectionPath: string): [string, StoredDoc][] {
+    const prefix = `${collectionPath}/`;
+    return Array.from(store.entries()).filter(
+      ([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/')
+    );
+  }
 
-function makeSupabaseMock(options: {
-  user: { id: string } | null;
-  book: Row | null;
-  section: Row | null;
-  sectionWords?: { section_id: string; word_id: string }[];
-  words?: Row[];
-}) {
-  const books = makeSingleRowBuilder(options.book ? [options.book] : []);
-  const sections = makeSingleRowBuilder(options.section ? [options.section] : []);
-  const sectionWords = makeSectionWordsBuilder(options.sectionWords ?? []);
-  const words = makeWordsBuilder(options.words ?? []);
+  function makeQuery(collectionPath: string, filters: { field: string; value: unknown }[], limitN?: number) {
+    return {
+      where(field: string, _op: '==', value: unknown) {
+        return makeQuery(collectionPath, [...filters, { field, value }], limitN);
+      },
+      limit(n: number) {
+        return makeQuery(collectionPath, filters, n);
+      },
+      async get() {
+        let matches = directChildren(collectionPath).filter(([, data]) =>
+          filters.every((f) => data[f.field] === f.value)
+        );
+        if (limitN !== undefined) {
+          matches = matches.slice(0, limitN);
+        }
+        const docs = matches.map(([path, data]) => ({
+          id: path.split('/').pop()!,
+          ref: makeDocRef(path),
+          data: () => ({ ...data }),
+        }));
+        return { empty: docs.length === 0, docs };
+      },
+    };
+  }
 
-  const from = vi.fn((table: string) => {
-    switch (table) {
-      case 'books':
-        return books;
-      case 'sections':
-        return sections;
-      case 'section_words':
-        return sectionWords;
-      case 'words':
-        return words;
-      default:
-        throw new Error(`Unexpected table: ${table}`);
-    }
-  });
+  function makeCollectionRef(path: string): any {
+    return {
+      path,
+      doc(id: string) {
+        return makeDocRef(`${path}/${id}`);
+      },
+      where(field: string, op: '==', value: unknown) {
+        return makeQuery(path, [{ field, value }]);
+      },
+    };
+  }
 
-  return {
-    auth: {
-      getUser: vi.fn().mockResolvedValue({ data: { user: options.user }, error: null }),
+  const db = {
+    collection(name: string) {
+      return makeCollectionRef(name);
     },
-    from,
-    books,
-    sections,
-    sectionWords,
-    words,
-  } as any;
+  };
+
+  return { db, store };
+}
+
+function putBook(store: Map<string, StoredDoc>, bookId: string, data: StoredDoc) {
+  store.set(`books/${bookId}`, { ...data });
+}
+
+function putSection(store: Map<string, StoredDoc>, bookId: string, sectionId: string, data: StoredDoc) {
+  store.set(`books/${bookId}/sections/${sectionId}`, { ...data });
+}
+
+function putWord(store: Map<string, StoredDoc>, wordId: string, data: StoredDoc) {
+  store.set(`words/${wordId}`, { ...data });
+}
+
+function getSection(store: Map<string, StoredDoc>, bookId: string, sectionId: string) {
+  return store.get(`books/${bookId}/sections/${sectionId}`) as any;
 }
 
 beforeEach(() => {
   mockRedirect.mockClear();
   mockNotFound.mockClear();
-  mockCreateClient.mockReset();
+  mockGetFirestore.mockReset();
+  mockGetAuthedUser.mockReset();
   mockMaybeUnlockNextSection.mockReset();
   mockMaybeUnlockNextSection.mockResolvedValue(undefined);
 });
 
 describe('PracticePage', () => {
-  test('shows a word whose next_review_date is in the future', async () => {
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      book: { id: 'book-1', user_id: 'user-1' },
-      section: { id: 'section-1', book_id: 'book-1', section_number: 1, status: 'ready_to_practice' },
-      sectionWords: [{ section_id: 'section-1', word_id: 'word-1' }],
-      words: [
-        {
-          id: 'word-1',
-          word: 'ephemeral',
-          definition: 'lasting a short time',
-          next_review_date: '2099-01-01',
-        },
-      ],
+  test('shows every word in the section regardless of nextReviewDate (no due-date filter on this page)', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'ready_to_practice',
+      wordIds: ['word-1'],
     });
-    mockCreateClient.mockResolvedValue(supabase);
+    putWord(store, 'word-1', {
+      word: 'ephemeral',
+      definition: 'lasting a short time',
+      nextReviewDate: '2099-01-01',
+    });
 
     const jsx = await PracticePage({
       params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }),
@@ -158,35 +179,40 @@ describe('PracticePage', () => {
     // it must show every word in the section regardless of due date, so a
     // word scheduled far in the future still shows up today.
     expect(screen.getByText('ephemeral')).toBeInTheDocument();
-    expect(supabase.words.eq).toHaveBeenCalledWith('user_id', 'user-1');
   });
 
   test('redirects to the book page when the section is locked', async () => {
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      book: { id: 'book-1', user_id: 'user-1' },
-      section: { id: 'section-1', book_id: 'book-1', section_number: 1, status: 'locked' },
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'locked',
+      wordIds: [],
     });
-    mockCreateClient.mockResolvedValue(supabase);
 
     await expect(
       PracticePage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) })
     ).rejects.toThrow('NEXT_REDIRECT:/book/book-1');
 
     expect(mockRedirect).toHaveBeenCalledWith('/book/book-1');
+    expect(mockMaybeUnlockNextSection).not.toHaveBeenCalled();
   });
 
   test.each(['ready_to_practice', 'ready_to_read', 'completed'])(
-    'does not redirect when the section status is %s',
+    'does not redirect when status is %s',
     async (status) => {
-      const supabase = makeSupabaseMock({
-        user: { id: 'user-1' },
-        book: { id: 'book-1', user_id: 'user-1' },
-        section: { id: 'section-1', book_id: 'book-1', section_number: 1, status },
-        sectionWords: [],
-        words: [],
+      const { db, store } = createFakeFirestore();
+      mockGetFirestore.mockReturnValue(db);
+      mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+      putBook(store, 'book-1', { userId: 'user-1' });
+      putSection(store, 'book-1', 'section-1', {
+        sectionNumber: 1,
+        status,
+        wordIds: ['word-1'],
       });
-      mockCreateClient.mockResolvedValue(supabase);
+      putWord(store, 'word-1', { word: 'ephemeral', definition: 'lasting a short time' });
 
       await PracticePage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
 
@@ -194,70 +220,62 @@ describe('PracticePage', () => {
     }
   );
 
-  test('C1: a zero-vocabulary section runs the unlock check and redirects to the book page when it unlocks', async () => {
-    // `section` is the same object reference the mock's `sections` table
-    // stores, so mutating it inside maybeUnlockNextSection's mock
-    // implementation simulates the real unlock (locked -> ready_to_read)
-    // the way the production function would actually update the row.
-    const section = {
-      id: 'section-1',
-      book_id: 'book-1',
-      section_number: 1,
+  test('C1: a zero-word section runs the unlock check and redirects to the book page when it unlocks', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
       status: 'ready_to_practice',
-    };
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      book: { id: 'book-1', user_id: 'user-1' },
-      section,
-      sectionWords: [],
-      words: [],
+      wordIds: [],
     });
-    mockCreateClient.mockResolvedValue(supabase);
+    // Simulates maybeUnlockNextSection's real effect: it mutates the stored
+    // section doc the way the production function would via its own
+    // Firestore update.
     mockMaybeUnlockNextSection.mockImplementation(async () => {
-      section.status = 'ready_to_read';
+      const current = getSection(store, 'book-1', 'section-1');
+      store.set('books/book-1/sections/section-1', { ...current, status: 'ready_to_read' });
     });
 
     await expect(
       PracticePage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) })
     ).rejects.toThrow('NEXT_REDIRECT:/book/book-1');
 
-    expect(mockMaybeUnlockNextSection).toHaveBeenCalledWith(supabase, 'section-1');
+    expect(mockMaybeUnlockNextSection).toHaveBeenCalledWith('book-1', 'section-1');
     expect(mockRedirect).toHaveBeenCalledWith('/book/book-1');
   });
 
-  test('C1: a zero-vocabulary section that does not unlock (unlock check is a no-op) renders normally', async () => {
-    const section = {
-      id: 'section-1',
-      book_id: 'book-1',
-      section_number: 1,
+  test('C1: a zero-word section that does not unlock renders normally', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
       status: 'ready_to_read',
-    };
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      book: { id: 'book-1', user_id: 'user-1' },
-      section,
-      sectionWords: [],
-      words: [],
+      wordIds: [],
     });
-    mockCreateClient.mockResolvedValue(supabase);
     // Default mock: resolves without mutating the section (status was
     // already past ready_to_practice, so the real function wouldn't change it).
 
     await PracticePage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
 
-    expect(mockMaybeUnlockNextSection).toHaveBeenCalledWith(supabase, 'section-1');
+    expect(mockMaybeUnlockNextSection).toHaveBeenCalledWith('book-1', 'section-1');
     expect(mockRedirect).not.toHaveBeenCalled();
   });
 
   test('a section with words never calls the unlock check (only the rate route does)', async () => {
-    const supabase = makeSupabaseMock({
-      user: { id: 'user-1' },
-      book: { id: 'book-1', user_id: 'user-1' },
-      section: { id: 'section-1', book_id: 'book-1', section_number: 1, status: 'ready_to_practice' },
-      sectionWords: [{ section_id: 'section-1', word_id: 'word-1' }],
-      words: [{ id: 'word-1', word: 'ephemeral', definition: 'lasting a short time' }],
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'ready_to_practice',
+      wordIds: ['word-1'],
     });
-    mockCreateClient.mockResolvedValue(supabase);
+    putWord(store, 'word-1', { word: 'ephemeral', definition: 'lasting a short time' });
 
     await PracticePage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
 
