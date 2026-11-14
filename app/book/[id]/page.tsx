@@ -1,11 +1,13 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAdminApp } from '@/lib/firebase/admin';
+import { getAuthedUser } from '@/lib/firebase/server';
 import SectionStatusBadge from '@/components/SectionStatusBadge';
 
 type Section = {
   id: string;
-  section_number: number;
+  sectionNumber: number;
   status: string;
 };
 
@@ -16,46 +18,42 @@ export default async function BookDetailPage({
 }) {
   const { id } = await params;
 
-  const supabase = await createClient();
-  const { data: userData } = await supabase.auth.getUser();
-  const user = userData.user;
+  const user = await getAuthedUser();
 
   if (!user) {
     redirect('/login');
   }
 
-  const { data: book } = await supabase
-    .from('books')
-    .select('id, title, author')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .single();
+  const db = getFirestore(getAdminApp());
+  const bookRef = db.collection('books').doc(id);
+  const bookSnap = await bookRef.get();
+  const bookData = bookSnap.data() as { userId: string; title: string; author?: string | null } | undefined;
 
-  if (!book) {
+  if (!bookSnap.exists || !bookData || bookData.userId !== user.uid) {
     notFound();
   }
 
-  const { data: sections } = await supabase
-    .from('sections')
-    .select('id, section_number, status')
-    .eq('book_id', id)
-    .order('section_number', { ascending: true });
+  const sectionsSnapshot = await bookRef.collection('sections').orderBy('sectionNumber', 'asc').get();
+  const sections: Section[] = sectionsSnapshot.docs.map((doc) => {
+    const data = doc.data() as { sectionNumber: number; status: string };
+    return { id: doc.id, sectionNumber: data.sectionNumber, status: data.status };
+  });
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col px-4 py-8">
-      <h1 className="mb-1 text-2xl font-semibold">{book.title}</h1>
-      {book.author && <p className="mb-6 text-sm text-gray-600">by {book.author}</p>}
+      <h1 className="mb-1 text-2xl font-semibold">{bookData.title}</h1>
+      {bookData.author && <p className="mb-6 text-sm text-gray-600">by {bookData.author}</p>}
 
-      {sections && sections.length > 0 ? (
+      {sections.length > 0 ? (
         <ul className="flex flex-col gap-2">
-          {(sections as Section[]).map((section) => {
-            const label = `Section ${section.section_number}`;
+          {sections.map((section) => {
+            const label = `Section ${section.sectionNumber}`;
 
             let href: string | null = null;
             if (section.status === 'ready_to_practice') {
-              href = `/book/${id}/practice/${section.section_number}`;
+              href = `/book/${id}/practice/${section.sectionNumber}`;
             } else if (section.status === 'ready_to_read' || section.status === 'completed') {
-              href = `/book/${id}/read/${section.section_number}`;
+              href = `/book/${id}/read/${section.sectionNumber}`;
             }
 
             return (
