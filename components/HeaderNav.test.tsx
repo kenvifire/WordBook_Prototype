@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { HeaderNav } from './layout';
+import { HeaderNav } from './HeaderNav';
 
 describe('HeaderNav', () => {
   test('I3: links to Library, Review, and Settings are always rendered', () => {

@@ -11,26 +11,27 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "next": "^15",
-    "react": "^19",
-    "react-dom": "^19",
+    "@opentelemetry/api": "^1.10.0",
     "epub2": "^3",
     "firebase": "^11",
-    "firebase-admin": "^13"
+    "firebase-admin": "^13",
+    "next": "^15",
+    "react": "^19",
+    "react-dom": "^19"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@testing-library/jest-dom": "^6",
+    "@testing-library/react": "^16",
+    "@testing-library/user-event": "^14",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "vitest": "^2",
     "@vitejs/plugin-react": "^4",
+    "autoprefixer": "^10",
     "jsdom": "^25",
-    "@testing-library/react": "^16",
-    "@testing-library/jest-dom": "^6",
-    "@testing-library/user-event": "^14",
-    "tailwindcss": "^3",
     "postcss": "^8",
-    "autoprefixer": "^10"
+    "tailwindcss": "^3",
+    "typescript": "^5",
+    "vitest": "^2"
   }
 }
