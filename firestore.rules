@@ -2,18 +2,41 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /books/{bookId} {
-      allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow read, delete: if request.auth != null && request.auth.uid == resource.data.userId;
       allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      // Immutability: an owner may update their own book, but may not
+      // reassign it to another uid (e.g. to push it into someone else's
+      // library).
+      allow update: if request.auth != null &&
+        request.auth.uid == resource.data.userId &&
+        request.resource.data.userId == resource.data.userId;
 
+      // The app's Admin SDK (server-side) is the only thing that ever
+      // writes sections — there is no legitimate client write path for this
+      // subcollection at all. Writes are denied outright rather than
+      // attempting to validate `wordIds` entries against word ownership.
       match /sections/{sectionId} {
-        allow read, write: if request.auth != null &&
+        allow read: if request.auth != null &&
           get(/databases/$(database)/documents/books/$(bookId)).data.userId == request.auth.uid;
+        allow write: if false;
       }
     }
 
     match /words/{wordId} {
-      allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow read, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+      // The deterministic id scheme (`${uid}_${word}`) means `create` must
+      // also bind the document id to the authenticated user — otherwise an
+      // attacker who knows a victim's uid could create `words/{victimUid}_{word}`
+      // stamped with their own `userId`, squatting on the id the victim's
+      // own code would otherwise use for that word.
+      allow create: if request.auth != null &&
+        request.resource.data.userId == request.auth.uid &&
+        wordId == request.auth.uid + '_' + request.resource.data.word;
+      // Immutability: an owner may update their own word (ratings, SM-2
+      // state, definition backfill), but may not reassign it to another uid.
+      allow update: if request.auth != null &&
+        request.auth.uid == resource.data.userId &&
+        request.resource.data.userId == resource.data.userId;
     }
   }
 }

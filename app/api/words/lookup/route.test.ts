@@ -303,6 +303,34 @@ describe('POST /api/words/lookup', () => {
     });
   });
 
+  test('an existing doc at this deterministic id owned by a DIFFERENT user is rejected, not returned or reused (ID-squatting defense in depth)', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'victim-uid' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    // Simulates an attacker who knew the victim's uid pre-creating
+    // words/{victimUid}_{word} stamped with their own userId — exactly the
+    // squatting attack the Firestore rules fix closes off at the write
+    // path. This test guards the read path as well.
+    putWord(store, 'victim-uid_ephemeral', {
+      userId: 'attacker-uid',
+      word: 'ephemeral',
+      definition: 'an attacker-controlled definition',
+      sectionRefs: [],
+      repetitions: 0,
+      easeFactor: 2.5,
+      intervalDays: 1,
+      nextReviewDate: '2026-01-01',
+      lastRating: null,
+    });
+
+    const response = await POST(makeRequest({ word: 'ephemeral' }));
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body).not.toMatchObject({ definition: 'an attacker-controlled definition' });
+    expect(mockFetchDefinition).not.toHaveBeenCalled();
+  });
+
   test('a non-race error from create() surfaces as a 500', async () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     const { db } = createFakeFirestore();

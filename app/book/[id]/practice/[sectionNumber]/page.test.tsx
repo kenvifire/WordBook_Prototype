@@ -165,6 +165,7 @@ describe('PracticePage', () => {
       wordIds: ['word-1'],
     });
     putWord(store, 'word-1', {
+      userId: 'user-1',
       word: 'ephemeral',
       definition: 'lasting a short time',
       nextReviewDate: '2099-01-01',
@@ -212,7 +213,7 @@ describe('PracticePage', () => {
         status,
         wordIds: ['word-1'],
       });
-      putWord(store, 'word-1', { word: 'ephemeral', definition: 'lasting a short time' });
+      putWord(store, 'word-1', { userId: 'user-1', word: 'ephemeral', definition: 'lasting a short time' });
 
       await PracticePage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
 
@@ -275,10 +276,43 @@ describe('PracticePage', () => {
       status: 'ready_to_practice',
       wordIds: ['word-1'],
     });
-    putWord(store, 'word-1', { word: 'ephemeral', definition: 'lasting a short time' });
+    putWord(store, 'word-1', { userId: 'user-1', word: 'ephemeral', definition: 'lasting a short time' });
 
     await PracticePage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
 
     expect(mockMaybeUnlockNextSection).not.toHaveBeenCalled();
+  });
+
+  test('a word doc whose userId does not match the authed user is filtered out (ID-squatting defense in depth)', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'victim-uid' });
+    putBook(store, 'book-1', { userId: 'victim-uid' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'ready_to_practice',
+      wordIds: ['word-1', 'word-2'],
+    });
+    // Simulates an attacker-squatted doc id landing in the victim's own
+    // section (e.g. written before the Firestore rules fix was deployed) —
+    // this word doc's userId does not match the authed (victim) user.
+    putWord(store, 'word-1', {
+      userId: 'attacker-uid',
+      word: 'squatted',
+      definition: 'attacker-controlled content',
+    });
+    putWord(store, 'word-2', {
+      userId: 'victim-uid',
+      word: 'legitimate',
+      definition: 'a real word the victim owns',
+    });
+
+    const jsx = await PracticePage({
+      params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }),
+    });
+    render(jsx);
+
+    expect(screen.queryByText('squatted')).not.toBeInTheDocument();
+    expect(screen.getByText('legitimate')).toBeInTheDocument();
   });
 });

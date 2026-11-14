@@ -53,6 +53,18 @@ export async function POST(request: NextRequest) {
 
   const existingSnap = await wordRef.get();
 
+  // Defense in depth against word-ID squatting: the deterministic id scheme
+  // (`${uid}_${word}`) means an attacker who knows this user's uid could
+  // have created this exact doc id stamped with their own `userId` before
+  // this user ever looked the word up (the Firestore rules close this off
+  // at the write path — this check guards the read path in case that
+  // doc was ever written, e.g. before the rules fix deployed). Treat a
+  // userId mismatch as if the doc didn't exist at all, rather than
+  // returning or reusing attacker-controlled content.
+  if (existingSnap.exists && (existingSnap.data() as WordDoc).userId !== user.uid) {
+    return NextResponse.json({ error: 'Failed to look up word' }, { status: 500 });
+  }
+
   if (existingSnap.exists) {
     const existing = existingSnap.data() as WordDoc;
     let definition = existing.definition;

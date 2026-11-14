@@ -83,7 +83,12 @@ export default async function PracticePage({
     const wordsCollection = db.collection('words');
     const wordSnapshots = await Promise.all(wordIds.map((wordId) => wordsCollection.doc(wordId).get()));
     words = wordSnapshots
-      .filter((snap) => snap.exists)
+      // Defense in depth against word-ID squatting (see firestore.rules):
+      // only render a word doc that's actually owned by the authed user.
+      // The Firestore rules close off the write path that would plant a
+      // foreign-owned doc at one of this section's wordIds, but this check
+      // guards the read path too, in case one was ever written.
+      .filter((snap) => snap.exists && (snap.data() as { userId?: string }).userId === user.uid)
       .map((snap) => {
         const data = snap.data() as { word: string; definition: string | null };
         return { id: snap.id, word: data.word, definition: data.definition ?? null };
