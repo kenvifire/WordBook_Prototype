@@ -5,7 +5,7 @@ WordBook is an account-based web app for learning vocabulary from the books you'
 ## Stack
 
 - **Next.js 15** (App Router) + **React 19** + **TypeScript 5**
-- **Supabase** — Postgres (data), Auth (email/password), Storage (uploaded EPUB files)
+- **Firebase** — Firestore (data), Authentication (email/password), Storage (uploaded EPUB files)
 - **Tailwind CSS 3** for styling
 - `epub2` for server-side EPUB parsing
 - Free dictionary lookups via `api.dictionaryapi.dev` (no API key) and the browser's native `speechSynthesis` for pronunciation (no cloud TTS)
@@ -21,19 +21,23 @@ No paid or keyed third-party APIs are required to run this app.
    npm install
    ```
 
-2. **Create a Supabase project**
+2. **Create a Firebase project**
 
-   Create a new project at [supabase.com](https://supabase.com) (the free tier is enough).
+   Create a new project at the [Firebase console](https://console.firebase.google.com) (the free Spark tier is enough). In the new project, enable:
 
-3. **Apply the database schema**
+   - **Firestore** (Build → Firestore Database → Create database, in production mode)
+   - **Authentication** (Build → Authentication → Get started → enable the Email/Password sign-in provider)
+   - **Storage** (Build → Storage → Get started, default bucket)
 
-   Run `supabase/migrations/0001_init.sql` against your new project — either paste its contents into the Supabase dashboard's SQL Editor and run it, or, with the [Supabase CLI](https://supabase.com/docs/guides/cli) linked to your project, run:
+3. **Deploy the security rules and indexes**
+
+   This repo's `firestore.rules`, `storage.rules`, and `firestore.indexes.json` are self-contained — no manual rule/index entry via the console is needed. With the [Firebase CLI](https://firebase.google.com/docs/cli) installed and logged in (`firebase login`), link the CLI to your project (`firebase use --add`) and deploy:
 
    ```bash
-   supabase db push
+   firebase deploy --only firestore:rules,firestore:indexes,storage
    ```
 
-   This creates the `books`, `sections`, `words`, and `section_words` tables along with their Row Level Security policies, and also creates the `epubs` Storage bucket for uploaded EPUB files together with its storage policies. The migration is self-contained, so no manual bucket setup is needed.
+   The Firestore rules and the Storage rules scope every read/write to the authenticated user who owns the document/file; `firestore.indexes.json` creates the composite indexes the app's range queries need (e.g. `words` filtered by `userId` and ordered/filtered by `nextReviewDate`). Note that these rules are a defense-in-depth layer only — the app itself talks to Firestore/Storage exclusively through the Admin SDK (server-side), which bypasses Security Rules entirely; the actual enforcement is the explicit `userId` check every query/mutation in app code performs. See "Firestore Security Rules verification status" below.
 
 4. **Configure environment variables**
 
@@ -41,12 +45,21 @@ No paid or keyed third-party APIs are required to run this app.
    cp .env.local.example .env.local
    ```
 
-   Fill in the two values from your Supabase project's API settings:
+   Fill in the seven values:
 
    ```
-   NEXT_PUBLIC_SUPABASE_URL=
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=
+   FIREBASE_PROJECT_ID=
+   FIREBASE_CLIENT_EMAIL=
+   FIREBASE_PRIVATE_KEY=
+   FIREBASE_STORAGE_BUCKET=
+   NEXT_PUBLIC_FIREBASE_API_KEY=
+   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+   NEXT_PUBLIC_FIREBASE_PROJECT_ID=
    ```
+
+   - `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY` come from a service-account key: Project Settings → Service Accounts → Generate new private key. That downloads a JSON file containing exactly these three fields (`project_id`, `client_email`, `private_key`) — copy them in as-is (keep the `private_key`'s `\n` escapes intact, quoting the value in `.env.local`).
+   - `FIREBASE_STORAGE_BUCKET` is your default Storage bucket's name, shown on the Storage page in the console (`your-project-id.appspot.com` for older projects, `your-project-id.firebasestorage.app` for newer ones).
+   - `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, and `NEXT_PUBLIC_FIREBASE_PROJECT_ID` come from the web app config: Project Settings → General → Your apps → add a Web app (or select the existing one) → the `firebaseConfig` snippet it shows you.
 
 5. **Run the app**
 
@@ -59,12 +72,12 @@ No paid or keyed third-party APIs are required to run this app.
 ### Other scripts
 
 ```bash
-npm test        # run the Vitest suite (mocks Supabase and fetch — no live project needed)
+npm test        # run the Vitest suite (mocks firebase-admin's Firestore/Auth/Storage clients and fetch — no live project needed)
 npm run typecheck
 npm run build
 ```
 
-> **Note on this build:** the full manual end-to-end flow (sign up, add a multi-section book, practice a section to 80%, confirm it unlocks, read and tap-to-define, see the word on `/review`) has **not** been exercised against a real Supabase project as of this writing — no project credentials were available during implementation. Everything above is implemented and covered by the unit/integration test suite with mocked Supabase/fetch clients, but a first real run against a live project is still pending.
+> **Note on this build:** the full manual end-to-end flow (sign up, add a multi-section book, practice a section to 80%, confirm it unlocks, read and tap-to-define, see the word on `/review`) has **not** been exercised against a real Firebase project as of this writing — no project credentials were available during implementation. Everything above is implemented and covered by the unit/integration test suite with mocked Firebase Admin SDK/fetch clients, but a first real run against a live project is still pending.
 
 ## Known decisions / v2 extension points
 
@@ -84,32 +97,33 @@ The product spec deliberately excludes the following from this build; a future v
 
 ### Implementation-level rulings made during this build
 
-The spec left some implementation details open; these decisions were made while building and are documented in full in `docs/superpowers/plans/2026-11-13-wordbook-webapp-v2.md`:
+The spec left some implementation details open; these decisions were made while building the original (Supabase-backed) version and are documented in full in `docs/superpowers/plans/2026-11-13-wordbook-webapp-v2.md`. The app was later ported from Supabase to Firebase (Firestore + Firebase Authentication + Firebase Storage) with no change to product behavior; the Firebase-specific adaptations of these decisions are documented in full in `docs/superpowers/plans/2026-11-14-wordbook-firebase-port.md`:
 
-1. **`section_words` join table.** Added (additively) to link sections to their member words many-to-many, since the spec's `words` table has no section reference but section unlock logic needs it.
-2. **Row Level Security everywhere.** Every table has RLS policies scoped to `auth.uid()`, even though the spec only implies per-user ownership rather than stating RLS explicitly — treated as a correctness requirement for a multi-user app.
+1. **Denormalized arrays instead of a join table.** Firestore has no joins, so the original `section_words` join table (linking sections to their member words many-to-many) is replaced by two arrays written together in one batch: each section document's `wordIds: string[]` and each word document's `sectionRefs: { bookId, sectionId }[]`.
+2. **Firestore Security Rules everywhere, as defense in depth.** Every collection (`books`, its `sections` subcollection, `words`) has rules scoped to `request.auth.uid`, even though the spec only implies per-user ownership rather than stating this explicitly. Because the app's server-side code talks to Firestore exclusively through the Admin SDK — which bypasses Security Rules entirely — the real enforcement is the explicit `userId` equality check every query/mutation in app code performs; the rules exist to protect against any future direct client access. See "Firestore Security Rules verification status" below.
 3. **`epub2` over `epubjs`** for EPUB parsing, since `epubjs` targets browser DOM/Blob APIs and parsing happens server-side in a Next.js API route.
 4. **Tailwind CSS v3**, not v4, for tooling stability (the spec didn't pin a version).
-5. **Supabase Storage holds raw uploaded `.epub` files** (in an `epubs` bucket) in addition to the flattened `raw_text` stored in Postgres; pasted or `.txt` text never touches Storage.
+5. **Firebase Storage holds raw uploaded `.epub` files** (under `epubs/{userId}/{uuid}.epub` in the default bucket) in addition to the flattened `rawText` stored in Firestore; pasted or `.txt` text never touches Storage.
 6. **The common-words list is the first 1000 entries of the MIT-licensed `first20hours/google-10000-english` frequency list**, bundled as `lib/text/commonWords.json`.
-7. **Recognition rating is global per word, not per book/section.** A word's `last_rating` is shared across every book it appears in, so mastering it in one book counts immediately toward another book's section unlock — matching the spec's own one-row-per-`(user_id, word)` schema.
+7. **Recognition rating is global per word, not per book/section.** A word's `lastRating` is shared across every book it appears in, so mastering it in one book counts immediately toward another book's section unlock — matching the spec's own one-document-per-`(userId, word)` model (enforced via each word document's deterministic id, `${userId}_${word}`).
 8. **The old local-JSON/OpenAI/MyMemory prototype was deleted outright** (`app/`, `components/`, `lib/`, `scripts/`, `data/` from the prior version) rather than migrated; `docs/business-tech-note.md` and `docs/runbook.md` are left untouched as historical record of that retired version.
 
-### RLS verification status
+### Firestore Security Rules verification status
 
-Row Level Security (ruling 2 above) has only been **verified by code review**, not by an executed test. The policies in `supabase/migrations/0001_init.sql` have been read carefully and appear correct — every table the app queries is covered, scoped to `auth.uid()`, and the app adds its own `user_id` filters as a second layer — but no automated test has run against a live Supabase project with two different users to confirm one is actually denied access to the other's rows. Before relying on this in production, run Supabase's local test suite with two users:
+The Security Rules (ruling 2 above) have only been **verified by code review**, not by an executed test. `firestore.rules` and `storage.rules` have been read carefully and appear correct — every collection/path the app uses is covered, scoped to `request.auth.uid`, and the app adds its own `userId` filters as a second layer — but no automated test has run against a live Firebase project (or the Firebase emulator) with two different users to confirm one is actually denied access to the other's data. Note that this matters less here than it would in a client-talks-directly-to-the-database design: the app's own server-side code uses the Admin SDK, which bypasses Security Rules altogether, so these rules only guard against a hypothetical future direct-from-browser Firestore/Storage client. Before relying on them for that purpose, test with the Firebase emulator and the `@firebase/rules-unit-testing` package:
 
 ```bash
-supabase test db
+firebase emulators:exec --only firestore,storage "your rules test script"
 ```
 
-(Writing that test suite is out of scope for the current build — the project's Global Constraints rule out a live Supabase project during implementation, so it could not have been executed here either.)
+(Writing that test suite is out of scope for the current build — the project's Global Constraints rule out a live Firebase project during implementation, so it could not have been executed here either.)
 
 ### Known backlog / rough edges
 
 Accumulated during implementation, not yet addressed:
 
-- **No transaction/rollback across the multi-step book-add flow.** Adding a book inserts the book row, then its sections, words, and `section_words` rows in separate steps; a failure partway through can leave a partially-created book rather than rolling back atomically.
+- **No transaction/rollback across the multi-step book-add flow.** Adding a book creates the book document, then its section documents, word documents, and the batch that links `wordIds`/`sectionRefs` together, in separate steps; a failure partway through can leave a partially-created book rather than rolling back atomically.
 - **Dictionary lookups scale linearly with book length.** Each unique non-common word triggers its own lookup to `api.dictionaryapi.dev`; a very long book could be slow enough to risk a request timeout during the add-book flow.
-- **A rare double-click race on a brand-new word's "Add to my vocabulary" button shows an error, but can't corrupt data.** Plain taps only fetch a definition and never insert a row — only the "Add" button does; the only remaining race is clicking "Add" on two *different* popups for the same not-yet-stored word in quick succession, so both requests see no existing row and both attempt an insert. The `unique(user_id, word)` constraint on `words` prevents any duplicate row or data corruption — the loser of the race just gets a 500 and sees "Could not look up this word." instead of the word it's actually displaying.
 - **`commonWords.json` is an unfiltered word-frequency list.** It's sourced directly from a frequency list, not curated for a "common words" filter, so it contains a few words some would consider inappropriate to have in that context.
+
+Resolved by the Firebase port (listed here for history, not as outstanding work): the original build's double-click race on a brand-new word's "Add to my vocabulary" button — two concurrent `add: true` requests for the same not-yet-stored word — used to show the loser a 500 ("Could not look up this word."). Firestore's `.create()` (fails atomically with `already-exists` if the document already exists) makes word creation race-safe: the loser's `.create()` call fails, and the route transparently re-fetches and returns the winner's data instead of surfacing an error.
