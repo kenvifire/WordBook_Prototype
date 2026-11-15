@@ -20,4 +20,9 @@ describe('normalizeWord', () => {
     expect(normalizeWord("'")).toBe('');
     expect(normalizeWord('123')).toBe('');
   });
+
+  test('keeps accented letters', () => {
+    expect(normalizeWord('café')).toBe('café');
+    expect(normalizeWord('¡mañana!')).toBe('mañana');
+  });
 });

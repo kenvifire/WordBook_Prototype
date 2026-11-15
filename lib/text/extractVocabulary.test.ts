@@ -41,4 +41,10 @@ describe('extractVocabulary', () => {
     );
     expect(result).toEqual(['alchemist']);
   });
+
+  test('keeps accented words that are not in the common-words list', () => {
+    const result = extractVocabulary('El café está en la mañana.');
+    expect(result).toContain('café');
+    expect(result).toContain('mañana');
+  });
 });
