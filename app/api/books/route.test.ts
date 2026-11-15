@@ -74,6 +74,7 @@ describe('POST /api/books', () => {
       format: 'text',
       rawText: 'some plain text content',
       userId: 'user-1',
+      language: 'english',
     });
     expect(mockParseEpub).not.toHaveBeenCalled();
     expect(mockGetStorage).not.toHaveBeenCalled();
@@ -105,6 +106,7 @@ describe('POST /api/books', () => {
       format: 'epub',
       rawText: 'flattened text',
       userId: 'user-1',
+      language: 'english',
     });
 
     // Uploaded to the epubs/{userId}/{uuid}.epub path convention, via the

@@ -16,6 +16,7 @@ vi.mock('@/lib/dictionary/dictionaryApi', () => ({
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
+import { buildWordId } from '@/lib/firebase/wordId';
 import { addBook } from './bookService';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
@@ -157,8 +158,13 @@ function sectionsForBook(store: Map<string, StoredDoc>, bookId: string) {
     .sort((a, b) => (a as any).sectionNumber - (b as any).sectionNumber);
 }
 
-function wordDoc(store: Map<string, StoredDoc>, userId: string, word: string) {
-  return store.get(`words/${userId}_${word}`);
+function wordDoc(
+  store: Map<string, StoredDoc>,
+  userId: string,
+  word: string,
+  language: string = 'english'
+) {
+  return store.get(`words/${buildWordId(userId, language, word)}`);
 }
 
 beforeEach(() => {
@@ -180,6 +186,7 @@ describe('addBook', () => {
       format: 'text',
       rawText,
       userId: 'user-1',
+      language: 'english',
     });
 
     const bookDoc = store.get(`books/${result.bookId}`) as any;
@@ -229,6 +236,7 @@ describe('addBook', () => {
       format: 'text',
       rawText: word,
       userId: 'user-1',
+      language: 'english',
     });
 
     const doc = wordDoc(store, 'user-1', word) as any;
@@ -285,6 +293,7 @@ describe('addBook', () => {
       format: 'text',
       rawText: word,
       userId: 'user-1',
+      language: 'english',
     });
 
     // Flush the microtask queue (all of addBook's work up to the gated
@@ -316,7 +325,7 @@ describe('addBook', () => {
 
     const existingWord = uniqueWord(0);
     const newWord = uniqueWord(1);
-    const existingWordId = `user-1_${existingWord}`;
+    const existingWordId = buildWordId('user-1', 'english', existingWord);
 
     store.set(`words/${existingWordId}`, {
       userId: 'user-1',
@@ -346,6 +355,7 @@ describe('addBook', () => {
       format: 'text',
       rawText,
       userId: 'user-1',
+      language: 'english',
     });
 
     // fetchDefinition is never called for the already-existing word.
@@ -383,7 +393,7 @@ describe('addBook', () => {
     // vocabulary" button (app/api/words/lookup/route.ts): addedFromReader
     // true, sectionRefs empty.
     const readerWord = uniqueWord(0);
-    store.set(`words/user-1_${readerWord}`, {
+    store.set(`words/${buildWordId('user-1', 'english', readerWord)}`, {
       userId: 'user-1',
       word: readerWord,
       definition: 'reader-added definition',
@@ -401,6 +411,7 @@ describe('addBook', () => {
       format: 'text',
       rawText: readerWord,
       userId: 'user-1',
+      language: 'english',
     });
 
     // sectionRefs legitimately grows (existing addBook behavior) ...
@@ -419,11 +430,23 @@ describe('addBook', () => {
     mockFetchDefinition.mockResolvedValue('a definition');
 
     const sharedWord = uniqueWord(0);
-    const wordId = `user-1_${sharedWord}`;
+    const wordId = buildWordId('user-1', 'english', sharedWord);
 
     const [resultA, resultB] = await Promise.all([
-      addBook({ title: 'Book A', format: 'text', rawText: sharedWord, userId: 'user-1' }),
-      addBook({ title: 'Book B', format: 'text', rawText: sharedWord, userId: 'user-1' }),
+      addBook({
+        title: 'Book A',
+        format: 'text',
+        rawText: sharedWord,
+        userId: 'user-1',
+        language: 'english',
+      }),
+      addBook({
+        title: 'Book B',
+        format: 'text',
+        rawText: sharedWord,
+        userId: 'user-1',
+        language: 'english',
+      }),
     ]);
 
     // Both callers genuinely raced for the same path: .create() was
@@ -468,7 +491,13 @@ describe('addBook', () => {
     });
 
     await expect(
-      addBook({ title: 'Flaky Dictionary Book', format: 'text', rawText, userId: 'user-1' })
+      addBook({
+        title: 'Flaky Dictionary Book',
+        format: 'text',
+        rawText,
+        userId: 'user-1',
+        language: 'english',
+      })
     ).resolves.toMatchObject({});
 
     const failedDoc = wordDoc(store, 'user-1', word2) as any;
@@ -498,13 +527,14 @@ describe('addBook', () => {
       format: 'text',
       rawText,
       userId: 'user-1',
+      language: 'english',
     });
 
     const sections = sectionsForBook(store, result.bookId);
     expect(sections).toHaveLength(2);
 
-    const wordId0 = `user-1_${word0}`;
-    const wordId1 = `user-1_${word1}`;
+    const wordId0 = buildWordId('user-1', 'english', word0);
+    const wordId1 = buildWordId('user-1', 'english', word1);
 
     expect((sections[0] as any).wordIds).toEqual([wordId0]);
     expect((sections[1] as any).wordIds).toEqual([wordId1]);
@@ -513,5 +543,64 @@ describe('addBook', () => {
     const doc1 = wordDoc(store, 'user-1', word1) as any;
     expect(doc0.sectionRefs).toEqual([{ bookId: result.bookId, sectionId: sections[0].id }]);
     expect(doc1.sectionRefs).toEqual([{ bookId: result.bookId, sectionId: sections[1].id }]);
+  });
+
+  test('addBook stores language on the book doc and words', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockFetchDefinition.mockResolvedValue('a definition');
+
+    const word = uniqueWord(0);
+    const result = await addBook({
+      title: 'Language Book',
+      format: 'text',
+      rawText: word,
+      userId: 'user-1',
+      language: 'english',
+    });
+
+    const bookDoc = store.get(`books/${result.bookId}`) as any;
+    expect(bookDoc).toMatchObject({ language: 'english', source: 'uploaded' });
+
+    const expectedWordId = buildWordId('user-1', 'english', word);
+    const wordKey = `words/${expectedWordId}`;
+    expect(store.has(wordKey)).toBe(true);
+    const doc = store.get(wordKey) as any;
+    expect(doc).toMatchObject({ language: 'english' });
+  });
+
+  test('addBook keeps the same spelling separate across two languages for the same user', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockFetchDefinition.mockResolvedValue('a definition');
+
+    // The brief's literal example word ("chat") is itself in
+    // lib/text/commonWords.json, so extractVocabulary strips it out
+    // regardless of language and no word doc would ever be created under
+    // either language — that would test nothing. Use a word guaranteed not
+    // to be in the (English-only, today) common-words list instead, while
+    // keeping the brief's actual intent: same spelling, two languages, same
+    // user, two distinct word docs.
+    const sharedSpelling = uniqueWord(0);
+
+    await addBook({
+      title: 'A',
+      format: 'text',
+      rawText: `${sharedSpelling} ${sharedSpelling} ${sharedSpelling}`,
+      userId: 'u1',
+      language: 'english',
+    });
+    await addBook({
+      title: 'B',
+      format: 'text',
+      rawText: `${sharedSpelling} ${sharedSpelling} ${sharedSpelling}`,
+      userId: 'u1',
+      language: 'french',
+    });
+
+    const englishWordId = buildWordId('u1', 'english', sharedSpelling);
+    const frenchWordId = buildWordId('u1', 'french', sharedSpelling);
+    expect(store.has(`words/${englishWordId}`)).toBe(true);
+    expect(store.has(`words/${frenchWordId}`)).toBe(true);
   });
 });

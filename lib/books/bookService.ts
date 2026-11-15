@@ -4,6 +4,7 @@ import { isAlreadyExistsError } from '@/lib/firebase/errors';
 import { splitIntoSections } from '@/lib/text/sectionize';
 import { extractVocabulary } from '@/lib/text/extractVocabulary';
 import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
+import { buildWordId } from '@/lib/firebase/wordId';
 
 export type AddBookInput = {
   title: string;
@@ -11,6 +12,7 @@ export type AddBookInput = {
   format: 'text' | 'epub';
   rawText: string;
   userId: string;
+  language: string;
 };
 
 export type AddBookResult = {
@@ -57,6 +59,7 @@ function todayDateString(): string {
 function newWordDoc(params: {
   userId: string;
   word: string;
+  language: string;
   definition: string | null;
   bookId: string;
   sectionId: string;
@@ -64,6 +67,7 @@ function newWordDoc(params: {
   return {
     userId: params.userId,
     word: params.word,
+    language: params.language,
     definition: params.definition,
     // Linked to the section it's being extracted from right here at create
     // time — not left as [] and filled in by the later batch — so a word
@@ -94,7 +98,7 @@ function newWordDoc(params: {
 }
 
 export async function addBook(input: AddBookInput): Promise<AddBookResult> {
-  const { title, author, format, rawText, userId } = input;
+  const { title, author, format, rawText, userId, language } = input;
   const db = getFirestore(getAdminApp());
 
   // The whole book's flattened text is intentionally NOT stored here.
@@ -108,6 +112,8 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
     title,
     author: author ?? null,
     format,
+    language,
+    source: 'uploaded',
     createdAt: FieldValue.serverTimestamp(),
   });
   const bookId = bookRef.id;
@@ -143,7 +149,7 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
     const candidateWords = extractVocabulary(section.text);
     if (candidateWords.length === 0) continue;
 
-    const wordIds = candidateWords.map((word) => `${userId}_${word}`);
+    const wordIds = candidateWords.map((word) => buildWordId(userId, language, word));
 
     // Select-first: a cheap get() per candidate (no write) tells us which
     // words are genuinely new for this user. Only those get a
@@ -173,7 +179,7 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
         try {
           await wordsCollection
             .doc(wordId)
-            .create(newWordDoc({ userId, word, definition, bookId, sectionId }));
+            .create(newWordDoc({ userId, word, language, definition, bookId, sectionId }));
         } catch (error) {
           if (!isAlreadyExistsError(error)) {
             throw error;
