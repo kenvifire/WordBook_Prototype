@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirebaseClientApp } from '@/lib/firebase/client';
+import GoogleSignInButton from '@/components/GoogleSignInButton';
 
 export default function SignupPage() {
   const router = useRouter();
@@ -75,6 +76,12 @@ export default function SignupPage() {
           {submitting ? 'Signing up…' : 'Sign up'}
         </button>
       </form>
+      <div className="my-4 flex items-center gap-3 text-xs text-gray-500">
+        <div className="h-px flex-1 bg-gray-200" />
+        or
+        <div className="h-px flex-1 bg-gray-200" />
+      </div>
+      <GoogleSignInButton />
       <p className="mt-4 text-sm">
         Already have an account?{' '}
         <Link href="/login" className="underline">
