@@ -29,9 +29,18 @@ service cloud.firestore {
       // attacker who knows a victim's uid could create `words/{victimUid}_{word}`
       // stamped with their own `userId`, squatting on the id the victim's
       // own code would otherwise use for that word.
+      // During the v3 word-ID migration, accept both the old shape
+      // (`${uid}_${word}`) and the new language-scoped shape
+      // (`${uid}_${language}_${word}`). Both bind the id to the caller's uid.
       allow create: if request.auth != null &&
         request.resource.data.userId == request.auth.uid &&
-        wordId == request.auth.uid + '_' + request.resource.data.word;
+        (
+          wordId == request.auth.uid + '_' + request.resource.data.word ||
+          (
+            request.resource.data.language is string &&
+            wordId == request.auth.uid + '_' + request.resource.data.language + '_' + request.resource.data.word
+          )
+        );
       // Immutability: an owner may update their own word (ratings, SM-2
       // state, definition backfill), but may not reassign it to another uid.
       allow update: if request.auth != null &&
