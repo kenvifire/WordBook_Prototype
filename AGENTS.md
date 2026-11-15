@@ -2,6 +2,8 @@
 
 Coordination doc for AI agents (and humans) working in this repo. Read this before making changes.
 
+> **A v3 redesign is being designed right now** — AI-generated story books, multi-language support, a Bookshelf/Practice/Statistics tab restructure, a user-configurable recognition threshold, a new Free-reading mode alongside today's practice-to-unlock flow, and user-configurable book sectioning (by page count or by chapter) for uploaded books. Full requirements and rulings: `docs/superpowers/specs/2026-11-15-wordbook-v3-design.md`. **This design has not yet been approved for implementation and no plan exists yet** — everything below still describes the live v1 app exactly as it runs today. Don't build against the v3 doc until a written plan exists (`docs/superpowers/plans/`); do read it before touching anything the "Out of scope for v1" section below calls out, since several of those exclusions are exactly what v3 is lifting.
+
 ## What this is
 
 WordBook is an account-based web app for learning vocabulary from books you're reading. Add a book (paste text, `.txt`, or `.epub`), and it splits into fixed 150-word sections, extracting the non-common words in each one. Before you can read a section you practice its vocabulary as SM-2 spaced-repetition flashcards; once you recognize ≥80% of a section's words, it unlocks for reading. Tapping any word while reading shows its definition; an explicit "Add to my vocabulary" button adds it to your global review queue. A `/review` page surfaces every word across every book due for spaced-repetition review today.
@@ -33,6 +35,8 @@ This is a course prototype (demo/final-package deliverable), not a commercial pr
 ### Out of scope for v1 (don't build unless asked)
 
 PDF support, non-English content, translation, payments, social login beyond Google, offline/mobile app, configurable section size/threshold, admin/analytics dashboards, cloud TTS (pronunciation uses the browser's built-in `window.speechSynthesis`, nothing server-side).
+
+**Note:** PDF support, non-English content, translation, and configurable section size/threshold are exactly what the in-progress v3 design (see the callout at the top of this file) lifts — they stay out of scope for v1 work, but don't treat them as permanently excluded from this app. (PDF support in v3 is scoped to text-layer PDFs only — no OCR for scanned/image-only PDFs.)
 
 ## Directory map
 
@@ -119,3 +123,5 @@ The deploy key is scoped server-side (via `authorized_keys` `command=`) to only 
 ## Where the history lives
 
 `docs/superpowers/plans/` has the two implementation plans this app was built from (`2026-11-13-wordbook-webapp-v2.md` for the original Supabase build, `2026-11-14-wordbook-firebase-port.md` for the Firebase port) — each has a "Rulings" section documenting every non-obvious design decision and why, plus a "Review Focus" section naming the specific risk areas that were checked. Worth reading before touching the data model or auth flow.
+
+`docs/superpowers/specs/2026-11-15-wordbook-v3-design.md` is the design doc (not yet a plan) for the v3 redesign described in the callout at the top of this file — read it for the reasoning behind any upcoming change to the data model, sectioning, or the tab structure before a v3 implementation plan exists in `docs/superpowers/plans/`.
