@@ -20,7 +20,7 @@ describe('WordPopup', () => {
     });
     const user = userEvent.setup();
 
-    render(<WordPopup word="ephemeral" />);
+    render(<WordPopup word="ephemeral" language="english" />);
 
     await user.click(screen.getByText('ephemeral'));
 
@@ -28,12 +28,32 @@ describe('WordPopup', () => {
       '/api/words/lookup',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ word: 'ephemeral', add: false }),
+        body: JSON.stringify({ word: 'ephemeral', add: false, language: 'english' }),
       })
     );
 
     expect(await screen.findByText('lasting a short time')).toBeInTheDocument();
     expect(screen.queryByText('Added ✓')).not.toBeInTheDocument();
+  });
+
+  test('WordPopup sends the language prop in the lookup request body', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ word: 'chat', definition: 'a cat' }),
+    });
+    const user = userEvent.setup();
+
+    render(<WordPopup word="chat" language="french" />);
+
+    await user.click(screen.getByText('chat'));
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/words/lookup',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ word: 'chat', add: false, language: 'french' }),
+      })
+    );
   });
 
   test('I4: clicking "Add to my vocabulary" actually posts an add request and only then shows Added', async () => {
@@ -43,7 +63,7 @@ describe('WordPopup', () => {
     });
     const user = userEvent.setup();
 
-    render(<WordPopup word="ephemeral" />);
+    render(<WordPopup word="ephemeral" language="english" />);
 
     await user.click(screen.getByText('ephemeral'));
     await screen.findByText('lasting a short time');
@@ -55,7 +75,7 @@ describe('WordPopup', () => {
       '/api/words/lookup',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ word: 'ephemeral', add: true }),
+        body: JSON.stringify({ word: 'ephemeral', add: true, language: 'english' }),
       })
     );
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -66,7 +86,7 @@ describe('WordPopup', () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false });
     const user = userEvent.setup();
 
-    render(<WordPopup word="gloaming" />);
+    render(<WordPopup word="gloaming" language="english" />);
 
     await user.click(screen.getByText('gloaming'));
 
@@ -80,7 +100,7 @@ describe('WordPopup', () => {
     });
     const user = userEvent.setup();
 
-    render(<WordPopup word="lucid" />);
+    render(<WordPopup word="lucid" language="english" />);
 
     const wordButton = screen.getByRole('button', { name: 'lucid' });
     await user.click(wordButton);
@@ -98,7 +118,7 @@ describe('WordPopup', () => {
     });
     const user = userEvent.setup();
 
-    render(<WordPopup word="gloaming" />);
+    render(<WordPopup word="gloaming" language="english" />);
 
     await user.click(screen.getByText('gloaming'));
     expect(await screen.findByText('twilight')).toBeInTheDocument();

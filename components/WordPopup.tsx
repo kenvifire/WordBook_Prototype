@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import SpeakButton from '@/components/SpeakButton';
 
-export default function WordPopup({ word }: { word: string }) {
+export default function WordPopup({ word, language }: { word: string; language: string }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [definition, setDefinition] = useState<string | null>(null);
@@ -18,7 +18,7 @@ export default function WordPopup({ word }: { word: string }) {
       const res = await fetch('/api/words/lookup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ word, add }),
+        body: JSON.stringify({ word, add, language }),
       });
       if (!res.ok) {
         setError('Could not look up this word.');

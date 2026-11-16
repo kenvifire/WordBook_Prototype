@@ -9,6 +9,7 @@ import WordPopup from '@/components/WordPopup';
 type BookData = {
   userId: string;
   title: string;
+  language: string;
 };
 
 type SectionData = {
@@ -138,7 +139,7 @@ export default async function ReadPage({
       <p className="leading-loose">
         {sectionWords.map((word, index) => (
           <span key={index}>
-            <WordPopup word={word} />{' '}
+            <WordPopup word={word} language={bookData.language} />{' '}
           </span>
         ))}
       </p>

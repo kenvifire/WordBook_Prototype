@@ -5,6 +5,7 @@ import { getAuthedUser } from '@/lib/firebase/server';
 import { isAlreadyExistsError } from '@/lib/firebase/errors';
 import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
 import { normalizeWord } from '@/lib/text/normalizeWord';
+import { buildWordId } from '@/lib/firebase/wordId';
 
 function todayDateString(): string {
   return new Date().toISOString().slice(0, 10);
@@ -13,6 +14,7 @@ function todayDateString(): string {
 type WordDoc = {
   userId: string;
   word: string;
+  language?: string;
   definition: string | null;
   sectionRefs: { bookId: string; sectionId: string }[];
   repetitions: number;
@@ -31,7 +33,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { word?: unknown; add?: unknown }
+    | { word?: unknown; add?: unknown; language?: unknown }
     | null;
   const rawWord = typeof body?.word === 'string' ? body.word : '';
   const word = normalizeWord(rawWord);
@@ -40,23 +42,29 @@ export async function POST(request: NextRequest) {
   // explicit "Add to my vocabulary" button sends `add: true`, which is the
   // only thing that creates a new word doc.
   const add = body?.add === true;
+  const language = typeof body?.language === 'string' ? body.language : null;
 
   if (!word) {
     return NextResponse.json({ error: 'word is required' }, { status: 400 });
   }
 
+  if (!language) {
+    return NextResponse.json({ error: 'language is required' }, { status: 400 });
+  }
+
   const db = getFirestore(getAdminApp());
   // Deterministic id, same scheme as bookService's extraction-time words —
   // lets this route and book ingestion land on the exact same doc for a
-  // given user+word without needing a query.
-  const wordId = `${user.uid}_${word}`;
+  // given user+word+language without needing a query.
+  const wordId = buildWordId(user.uid, language, word);
   const wordRef = db.collection('words').doc(wordId);
 
   const existingSnap = await wordRef.get();
 
   // Defense in depth against word-ID squatting: the deterministic id scheme
-  // (`${uid}_${word}`) means an attacker who knows this user's uid could
-  // have created this exact doc id stamped with their own `userId` before
+  // (`${uid}_${language}_${word}`) means an attacker who knows this user's
+  // uid could have created this exact doc id stamped with their own
+  // `userId` before
   // this user ever looked the word up (the Firestore rules close this off
   // at the write path — this check guards the read path in case that
   // doc was ever written, e.g. before the rules fix deployed). Treat a
@@ -114,6 +122,7 @@ export async function POST(request: NextRequest) {
   const newWordDoc: WordDoc = {
     userId: user.uid,
     word,
+    language,
     definition,
     sectionRefs: [],
     repetitions: 0,
