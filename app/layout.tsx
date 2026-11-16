@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { HeaderNav } from '@/components/HeaderNav';
+import { TabBar } from '@/components/TabBar';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -17,6 +18,7 @@ export default function RootLayout({
       <body>
         <HeaderNav />
         {children}
+        <TabBar />
       </body>
     </html>
   );
