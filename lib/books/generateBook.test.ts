@@ -41,7 +41,7 @@ type StoredDoc = Record<string, unknown>;
 // than inventing a new one"), trimmed down to what generateBook.ts
 // actually uses: collection/doc/add/get/create/update and a simple batch.
 // No runTransaction fake needed — generateBook.ts never uses one.
-function createFakeFirestore() {
+function createFakeFirestore(options: { failWordCreate?: (wordId: string) => boolean } = {}) {
   const store = new Map<string, StoredDoc>();
   let counter = 0;
   const nextId = () => `auto-${++counter}`;
@@ -101,11 +101,22 @@ function createFakeFirestore() {
           err.code = 6;
           throw err;
         }
+        // Test-only injection point for simulating a genuine (non-race)
+        // Firestore failure partway through the word-creation loop, to
+        // exercise the partial-failure cleanup path — a plain Error, with
+        // no `.code`, so isAlreadyExistsError never mistakes it for a
+        // harmless race.
+        if (options.failWordCreate?.(id)) {
+          throw new Error(`Simulated create() failure for ${path}`);
+        }
         store.set(path, { ...data });
         return {};
       },
       async update(data: Record<string, unknown>) {
         applyUpdate(path, data);
+      },
+      async delete() {
+        store.delete(path);
       },
       collection(name: string) {
         return makeCollectionRef(`${path}/${name}`);
@@ -245,8 +256,18 @@ describe('startGeneratingBook', () => {
     });
     mockTranslateWord.mockImplementation((word: string) => Promise.resolve(`def-${word}`));
 
-    // 320 filler words -> 3 sections of 150/150/20 words via splitByFixedWordCount.
-    const storyText = longStoryText(320);
+    // 320 words -> 3 sections of 150/150/20 words via splitByFixedWordCount.
+    // 'glimmer' is woven into section 1's own 150 words, 'wander' into
+    // section 2's, and section 3 gets neither — so this also exercises
+    // that each word's sectionRefs is scoped to the section it actually
+    // appears in, not every section of the book.
+    const section1Words = Array.from({ length: 149 }, (_, i) => `filler1-${i}`);
+    section1Words.splice(10, 0, 'glimmer');
+    const section2Words = Array.from({ length: 149 }, (_, i) => `filler2-${i}`);
+    section2Words.splice(10, 0, 'wander');
+    const section3Words = Array.from({ length: 20 }, (_, i) => `filler3-${i}`);
+    const storyText = [...section1Words, ...section2Words, ...section3Words].join(' ');
+
     mockGenerateStory.mockResolvedValue({
       title: 'The Brave Fox',
       text: storyText,
@@ -272,13 +293,13 @@ describe('startGeneratingBook', () => {
     const glimmerId = buildWordId('user-1', 'english', 'glimmer');
     const wanderId = buildWordId('user-1', 'english', 'wander');
 
-    // Every generated word is linked to every section (see generateBook.ts's
-    // own comment on why: a single flat vocabulary list has no per-section
-    // breakdown to trust instead).
-    for (const section of sections) {
-      expect((section as any).wordIds).toEqual(expect.arrayContaining([glimmerId, wanderId]));
-      expect((section as any).wordIds).toHaveLength(2);
-    }
+    // Each word is linked only to the section(s) it actually appears in —
+    // not every section of the book (AGENTS.md sharp edge #3's sibling
+    // concern: every section sharing an identical wordIds list would make
+    // every section's recognition rate identical too).
+    expect((sections[0] as any).wordIds).toEqual([glimmerId]);
+    expect((sections[1] as any).wordIds).toEqual([wanderId]);
+    expect((sections[2] as any).wordIds).toEqual([]);
 
     const glimmerDoc = store.get(`words/${glimmerId}`) as any;
     const wanderDoc = store.get(`words/${wanderId}`) as any;
@@ -295,13 +316,79 @@ describe('startGeneratingBook', () => {
     });
     expect(wanderDoc.definition).toBe('def-wander');
 
-    expect(glimmerDoc.sectionRefs).toHaveLength(3);
-    expect(glimmerDoc.sectionRefs).toEqual(
-      expect.arrayContaining(sections.map((s) => ({ bookId, sectionId: s.id })))
-    );
+    expect(glimmerDoc.sectionRefs).toEqual([{ bookId, sectionId: sections[0].id }]);
+    expect(wanderDoc.sectionRefs).toEqual([{ bookId, sectionId: sections[1].id }]);
 
     expect(mockTranslateWord).toHaveBeenCalledWith('glimmer', 'english', 'spanish');
     expect(mockTranslateWord).toHaveBeenCalledWith('wander', 'english', 'spanish');
+  });
+
+  test("each word's sectionRefs only includes the sections it actually appears in, not every section", async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    // section1 contains "alpha" but not "beta"; section2 contains "beta"
+    // but not "alpha". Both are in the model's vocabulary list.
+    const section1Words = Array.from({ length: 149 }, (_, i) => `filler1-${i}`);
+    section1Words.splice(50, 0, 'alpha');
+    const section2Words = Array.from({ length: 20 }, (_, i) => `filler2-${i}`);
+    section2Words.splice(5, 0, 'beta');
+    const storyText = [...section1Words, ...section2Words].join(' ');
+
+    mockGenerateStory.mockResolvedValue({
+      title: 'Two Sections',
+      text: storyText,
+      vocabulary: ['alpha', 'beta'],
+    });
+
+    const { bookId } = await startGeneratingBook(makeInput());
+
+    await vi.waitFor(() => {
+      const bookDoc = store.get(`books/${bookId}`) as any;
+      expect(bookDoc?.generationStatus).toBe('ready');
+    });
+
+    const sections = sectionsForBook(store, bookId);
+    expect(sections).toHaveLength(2);
+
+    const alphaId = buildWordId('user-1', 'english', 'alpha');
+    const betaId = buildWordId('user-1', 'english', 'beta');
+
+    const alphaDoc = store.get(`words/${alphaId}`) as any;
+    const betaDoc = store.get(`words/${betaId}`) as any;
+
+    expect(alphaDoc.sectionRefs).toEqual([{ bookId, sectionId: sections[0].id }]);
+    expect(betaDoc.sectionRefs).toEqual([{ bookId, sectionId: sections[1].id }]);
+
+    expect((sections[0] as any).wordIds).toEqual([alphaId]);
+    expect((sections[1] as any).wordIds).toEqual([betaId]);
+  });
+
+  test('a failure partway through the word-creation loop cleans up already-created section docs and sets generationStatus: failed', async () => {
+    const troublesomeWordId = buildWordId('user-1', 'english', 'troublesome');
+    const { db, store } = createFakeFirestore({
+      failWordCreate: (wordId) => wordId === troublesomeWordId,
+    });
+    mockGetFirestore.mockReturnValue(db);
+
+    // Short text -> exactly one section, so by the time the word-creation
+    // loop's injected failure fires, at least one section doc already
+    // exists — exactly the scenario the cleanup path exists for.
+    mockGenerateStory.mockResolvedValue({
+      title: 'Oops',
+      text: longStoryText(10),
+      vocabulary: ['troublesome'],
+    });
+
+    const { bookId } = await startGeneratingBook(makeInput());
+
+    await vi.waitFor(() => {
+      const bookDoc = store.get(`books/${bookId}`) as any;
+      expect(bookDoc?.generationStatus).toBe('failed');
+    });
+
+    // The section doc created before the failure must not be left behind.
+    expect(sectionsForBook(store, bookId)).toHaveLength(0);
   });
 
   test('on a generateStory failure, sets generationStatus: failed and creates no sections/words', async () => {

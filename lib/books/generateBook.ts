@@ -21,13 +21,39 @@ function todayDateString(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+// A deliberately simple, non-extraction tokenizer: whitespace-split, then a
+// light strip of leading/trailing non-letter/non-digit characters (so a
+// word immediately followed by natural-prose punctuation like a comma or
+// period still matches) and lowercasing. No stopword filtering,
+// clitic-stripping, or any of extractVocabulary's other language-aware
+// machinery — this only needs a literal, case-insensitive presence check
+// of the model's own vocabulary words against a section's own text, not a
+// real vocabulary extraction.
+const EDGE_PUNCTUATION = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu;
+
+function normalizeForPresenceCheck(token: string): string {
+  return token.replace(EDGE_PUNCTUATION, '').toLowerCase();
+}
+
+function tokenizeSectionText(text: string): Set<string> {
+  return new Set(
+    text
+      .trim()
+      .split(/\s+/)
+      .map(normalizeForPresenceCheck)
+      .filter((token) => token.length > 0)
+  );
+}
+
 // Same field shape as bookService.ts's `newWordDoc` (SM-2 defaults,
 // `addedFromReader: false`, etc.) — duplicated rather than imported, per
 // AGENTS.md's "no new abstractions for one caller" rule and because this
 // one differs in a deliberate way `newWordDoc` doesn't need to: it takes
-// the full set of this book's section refs up front (see the "link every
-// word to every section" note in `runGeneration` below), not a single
-// {bookId, sectionId} pair tied to the section currently being extracted.
+// the already-computed set of section refs this word was actually found
+// present in (see `runGeneration` below), rather than a single
+// {bookId, sectionId} pair tied to the one section currently being
+// extracted — a generated book's words are resolved against every section
+// up front, not one section at a time.
 function newGeneratedWordDoc(params: {
   userId: string;
   word: string;
@@ -63,6 +89,13 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
   const db = getFirestore(getAdminApp());
   const bookRef = db.collection('books').doc(bookId);
 
+  // Tracked outside the try block so the catch below can best-effort clean
+  // up any section docs already written before a later failure (e.g. a
+  // genuine Firestore error partway through the word-creation loop, not a
+  // generateStory rejection) — a book that ends up generationStatus:
+  // 'failed' must never be left with orphaned section docs behind it.
+  let sectionDocRefs: FirebaseFirestore.DocumentReference[] = [];
+
   try {
     const result = await generateStory({
       topic: input.topic,
@@ -73,7 +106,7 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
 
     const sections = splitByFixedWordCount(result.text);
     const sectionsCollection = bookRef.collection('sections');
-    const sectionDocRefs = await Promise.all(
+    sectionDocRefs = await Promise.all(
       sections.map((section) =>
         sectionsCollection.add({
           sectionNumber: section.sectionNumber,
@@ -86,18 +119,25 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
       )
     );
 
-    // Design note (no analog in extractAndLinkWords, which always knows
-    // exactly which section a candidate word came from because it extracts
-    // candidates FROM that section's own text): generateStory returns one
-    // flat `vocabulary` list for the WHOLE story, not a per-section
-    // breakdown, and per the task brief this step does not re-verify
-    // placement (no scanning each section's text to confirm/assign a
-    // word to "its" section) — it trusts the model's list as-is. The
-    // simplest choice consistent with "don't verify placement" is to link
-    // every generated vocabulary word to every section of this book, so
-    // every section's practice-to-unlock set is well-formed (non-empty)
-    // rather than only the first section ever having a gate.
-    const allSectionRefs = sectionDocRefs.map((ref) => ({ bookId, sectionId: ref.id }));
+    // Unlike extractAndLinkWords (which always knows exactly which section
+    // a candidate word came from, since it extracts candidates FROM that
+    // section's own text), generateStory returns one flat `vocabulary`
+    // list for the WHOLE story, with no per-section breakdown. Per the
+    // task brief, this step doesn't re-run real vocabulary extraction —
+    // but it DOES still need to know which section(s) each word is
+    // genuinely in, because every section of a generated book sharing the
+    // exact same wordIds would make every section's recognition rate
+    // identical, letting one rating cascade through
+    // app/api/words/[wordId]/rate/route.ts's per-sectionRef unlock loop
+    // and unlock the whole book at once (AGENTS.md sharp edge #3's sibling
+    // concern). So each section's own text is checked for literal
+    // (case-insensitive) presence of each vocabulary word — simple
+    // whitespace tokenization, not extractVocabulary's stopword/clitic
+    // machinery. A vocabulary word that isn't literally found in any
+    // section's text ends up with sectionRefs: [] for this book, the same
+    // already-established degraded shape a reader-added word with no
+    // section has — not treated as an error.
+    const sectionWordSets = sections.map((section) => tokenizeSectionText(section.text));
 
     const { nativeLanguage } = await getUserProfile(input.userId);
     const wordsCollection = db.collection('words');
@@ -109,12 +149,25 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
     // there's no reason to do the extra translateWord call).
     const uniqueWords = Array.from(new Set(result.vocabulary));
 
-    const wordIds = await Promise.all(
+    // sectionWordIds[i] collects every word id actually found present in
+    // sections[i]'s text, for the batch update below.
+    const sectionWordIds: string[][] = sections.map(() => []);
+
+    const wordLinkEntries = await Promise.all(
       uniqueWords.map(async (word) => {
         const wordId = buildWordId(input.userId, input.language, word);
         const definition = await translateWord(word, input.language, nativeLanguage).catch(
           () => null
         );
+
+        const normalizedWord = normalizeForPresenceCheck(word);
+        const sectionRefs: { bookId: string; sectionId: string }[] = [];
+        sectionWordSets.forEach((tokens, i) => {
+          if (tokens.has(normalizedWord)) {
+            sectionWordIds[i].push(wordId);
+            sectionRefs.push({ bookId, sectionId: sectionDocRefs[i].id });
+          }
+        });
 
         try {
           await wordsCollection.doc(wordId).create(
@@ -123,7 +176,7 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
               word,
               language: input.language,
               definition,
-              sectionRefs: allSectionRefs,
+              sectionRefs,
             })
           );
         } catch (error) {
@@ -135,24 +188,31 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
           // from another book) — per the brief, a freshly generated book's
           // vocabulary is assumed new, so this is not optimized with a
           // select-first get() the way extractAndLinkWords's loop is; the
-          // race is simply tolerated here. Either way wordId is still the
-          // right id to link below.
+          // race is simply tolerated here. Either way wordId/sectionRefs
+          // computed above are still correct to link below.
         }
 
-        return wordId;
+        return { wordId, sectionRefs };
       })
     );
 
-    if (wordIds.length > 0) {
-      const batch = db.batch();
-      for (const sectionRef of sectionDocRefs) {
-        batch.update(sectionRef, { wordIds: FieldValue.arrayUnion(...wordIds) });
+    const batch = db.batch();
+    let hasBatchOps = false;
+    for (let i = 0; i < sectionDocRefs.length; i++) {
+      if (sectionWordIds[i].length > 0) {
+        batch.update(sectionDocRefs[i], { wordIds: FieldValue.arrayUnion(...sectionWordIds[i]) });
+        hasBatchOps = true;
       }
-      for (const wordId of wordIds) {
+    }
+    for (const { wordId, sectionRefs } of wordLinkEntries) {
+      if (sectionRefs.length > 0) {
         batch.update(wordsCollection.doc(wordId), {
-          sectionRefs: FieldValue.arrayUnion(...allSectionRefs),
+          sectionRefs: FieldValue.arrayUnion(...sectionRefs),
         });
+        hasBatchOps = true;
       }
+    }
+    if (hasBatchOps) {
       await batch.commit();
     }
 
@@ -162,6 +222,26 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
     // pattern: log server-side, never throw out of this fire-and-forget
     // worker.
     console.error('Story generation failed for book', bookId, error);
+
+    // Best-effort cleanup of any section docs already written before this
+    // failure — wrapped in its own try/catch so a cleanup failure can
+    // never mask the original error or throw out of this catch block.
+    // Word docs already created before the failure are deliberately left
+    // alone: they're legitimate global per-user vocabulary now,
+    // independent of this specific book's fate (same reasoning as why
+    // this app never deletes words elsewhere).
+    if (sectionDocRefs.length > 0) {
+      try {
+        await Promise.all(sectionDocRefs.map((ref) => ref.delete()));
+      } catch (cleanupError) {
+        console.error(
+          'Failed to clean up partially-created sections for book',
+          bookId,
+          cleanupError
+        );
+      }
+    }
+
     await bookRef.update({ generationStatus: 'failed' }).catch((updateError) => {
       console.error('Failed to mark book generation as failed', bookId, updateError);
     });
