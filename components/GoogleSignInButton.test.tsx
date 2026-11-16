@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 
 describe('GoogleSignInButton', () => {
-  test('clicking signs in with a Google popup, exchanges the idToken for a session, and redirects to /library', async () => {
+  test('clicking signs in with a Google popup, exchanges the idToken for a session, and redirects to /bookshelf', async () => {
     mockSignInWithPopup.mockResolvedValue({
       user: { getIdToken: vi.fn().mockResolvedValue('fake-id-token') },
     });
@@ -37,7 +37,7 @@ describe('GoogleSignInButton', () => {
     render(<GoogleSignInButton />);
     fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
 
-    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/library'));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/bookshelf'));
 
     expect(global.fetch).toHaveBeenCalledWith(
       '/api/auth/session',
