@@ -3,7 +3,8 @@ import { getAdminApp } from '@/lib/firebase/admin';
 import { isAlreadyExistsError } from '@/lib/firebase/errors';
 import { Section, splitByChapters, splitByPageCount } from '@/lib/text/sectionize';
 import { extractVocabulary } from '@/lib/text/extractVocabulary';
-import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
+import { translateWord } from '@/lib/translate/translateApi';
+import { getUserProfile } from '@/lib/users/userProfile';
 import { buildWordId } from '@/lib/firebase/wordId';
 import { detectLanguage } from '@/lib/text/detectLanguage';
 import {
@@ -33,14 +34,16 @@ export type AddBookResult = {
 
 // I6: a section's new words were previously all looked up via one unbounded
 // Promise.all, so a long section could fire thousands of simultaneous
-// dictionary requests. This runs at most `limit` fetchDefinition calls
+// translation requests. This runs at most `limit` translateWord calls
 // concurrently via a small worker-pool loop, preserving each word's result
 // at its original index.
-const DICTIONARY_CONCURRENCY = 5;
+const TRANSLATION_CONCURRENCY = 5;
 
 async function fetchDefinitionsWithLimit(
   words: string[],
-  limit: number = DICTIONARY_CONCURRENCY
+  sourceLanguage: string,
+  targetLanguage: string | null,
+  limit: number = TRANSLATION_CONCURRENCY
 ): Promise<(string | null)[]> {
   const results: (string | null)[] = new Array(words.length).fill(null);
   let nextIndex = 0;
@@ -50,10 +53,12 @@ async function fetchDefinitionsWithLimit(
       const index = nextIndex;
       nextIndex += 1;
       if (index >= words.length) return;
-      // fetchDefinition never rejects, but each call is still wrapped
-      // defensively so one word's dictionary failure can never abort the
+      // translateWord never rejects, but each call is still wrapped
+      // defensively so one word's translation failure can never abort the
       // rest of the batch.
-      results[index] = await fetchDefinition(words[index]).catch(() => null);
+      results[index] = await translateWord(words[index], sourceLanguage, targetLanguage).catch(
+        () => null
+      );
     }
   }
 
@@ -126,6 +131,12 @@ async function extractAndLinkWords(params: {
   const db = getFirestore(getAdminApp());
   const wordsCollection = db.collection('words');
 
+  // Fetched once per call (not threaded through as a new parameter — see
+  // Plan 4 Task 2's ruling) since this function already receives `userId`.
+  // `nativeLanguage` is the translation target for every new word extracted
+  // below, for every book language, not just English.
+  const { nativeLanguage } = await getUserProfile(userId);
+
   for (let i = 0; i < sections.length; i++) {
     const section = sections[i];
     const sectionRef = sectionDocRefs[i];
@@ -138,7 +149,7 @@ async function extractAndLinkWords(params: {
 
     // Select-first: a cheap get() per candidate (no write) tells us which
     // words are genuinely new for this user. Only those get a
-    // fetchDefinition call and a .create() attempt — an already-existing
+    // translateWord call and a .create() attempt — an already-existing
     // word's definition/SM-2 state is never touched here; we select first
     // and never upsert.
     const existenceSnapshots = await Promise.all(
@@ -152,18 +163,18 @@ async function extractAndLinkWords(params: {
       }
     }
 
-    // Important #3: the dictionary API is English-only. For a non-English
-    // word that happens to look like an English word (e.g. Spanish "sale",
-    // French "once"), it can return a REAL but WRONG English definition
-    // instead of failing gracefully to null — and since this app never
-    // overwrites an existing word's definition on re-extraction, a wrong
-    // definition would become permanent, with no path for a future
-    // translation pipeline to ever correct it. Skip the dictionary lookup
-    // entirely for a non-English language and store null directly.
-    const definitions =
-      language === 'english'
-        ? await fetchDefinitionsWithLimit(newWordPositions.map((j) => candidateWords[j]))
-        : newWordPositions.map(() => null);
+    // Translation-based definitions, for every book language (not just
+    // English, unlike the old dictionaryapi.dev-backed lookup this
+    // replaced). translateWord itself already resolves to null — without
+    // ever making a network call — for a null nativeLanguage, a
+    // source/target pair it has no language code for, or a same-language
+    // pair (see lib/translate/translateApi.ts), so no extra gating is
+    // needed here.
+    const definitions = await fetchDefinitionsWithLimit(
+      newWordPositions.map((j) => candidateWords[j]),
+      language,
+      nativeLanguage
+    );
 
     await Promise.all(
       newWordPositions.map(async (j, k) => {

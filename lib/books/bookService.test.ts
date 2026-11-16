@@ -14,6 +14,14 @@ vi.mock('@/lib/dictionary/dictionaryApi', () => ({
   fetchDefinition: vi.fn(),
 }));
 
+vi.mock('@/lib/translate/translateApi', () => ({
+  translateWord: vi.fn(),
+}));
+
+vi.mock('@/lib/users/userProfile', () => ({
+  getUserProfile: vi.fn(),
+}));
+
 vi.mock('@/lib/text/detectLanguage', () => ({
   detectLanguage: vi.fn(() => 'english'),
 }));
@@ -51,6 +59,8 @@ vi.mock('@/lib/storage/pendingBookText', () => {
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
+import { translateWord } from '@/lib/translate/translateApi';
+import { getUserProfile } from '@/lib/users/userProfile';
 import { detectLanguage } from '@/lib/text/detectLanguage';
 import { detectChapterBreaksByHeading, detectChapterBreaksFromTitles } from '@/lib/text/detectChapters';
 import {
@@ -63,6 +73,8 @@ import { addBook, finalizeSectioning } from './bookService';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
 const mockFetchDefinition = fetchDefinition as unknown as ReturnType<typeof vi.fn>;
+const mockTranslateWord = translateWord as unknown as ReturnType<typeof vi.fn>;
+const mockGetUserProfile = getUserProfile as unknown as ReturnType<typeof vi.fn>;
 const mockDetectLanguage = detectLanguage as unknown as ReturnType<typeof vi.fn>;
 const mockDetectChapterBreaksByHeading = detectChapterBreaksByHeading as unknown as ReturnType<
   typeof vi.fn
@@ -280,6 +292,15 @@ function wordDoc(
 beforeEach(() => {
   mockFetchDefinition.mockReset();
   mockFetchDefinition.mockResolvedValue('a definition');
+  mockTranslateWord.mockReset();
+  mockTranslateWord.mockResolvedValue(null);
+  mockGetUserProfile.mockReset();
+  mockGetUserProfile.mockResolvedValue({
+    nativeLanguage: null,
+    avatarUrl: null,
+    theme: 'system',
+    recognitionThreshold: 0.8,
+  });
   mockDetectLanguage.mockReset();
   mockDetectLanguage.mockReturnValue('english');
   mockDetectChapterBreaksByHeading.mockReset();
@@ -327,17 +348,23 @@ describe('addBook', () => {
     expect(mockSavePendingBookText).toHaveBeenCalledWith('u1', bookId, 'hello world');
   });
 
-  test('a dictionary lookup failure for one word does not abort extraction for the rest of the section', async () => {
+  test('a translation failure for one word does not abort extraction for the rest of the section', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
+    mockGetUserProfile.mockResolvedValue({
+      nativeLanguage: 'spanish',
+      avatarUrl: null,
+      theme: 'system',
+      recognitionThreshold: 0.8,
+    });
 
     const words = Array.from({ length: 5 }, (_, i) => uniqueWord(i));
     const [word0, , word2] = words;
     const rawText = words.join(' ');
 
-    mockFetchDefinition.mockImplementation((w: string) => {
+    mockTranslateWord.mockImplementation((w: string) => {
       if (w === word2) {
-        return Promise.reject(new Error('dictionary API down'));
+        return Promise.reject(new Error('translation API down'));
       }
       return Promise.resolve(`definition for ${w}`);
     });
@@ -551,7 +578,13 @@ describe('finalizeSectioning', () => {
   test('a brand-new word is created with the deterministic id `${userId}_${language}_${word}` and SM-2 defaults', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('the definition');
+    mockGetUserProfile.mockResolvedValue({
+      nativeLanguage: 'spanish',
+      avatarUrl: null,
+      theme: 'system',
+      recognitionThreshold: 0.8,
+    });
+    mockTranslateWord.mockResolvedValue('the definition');
 
     const word = uniqueWord(0);
     const { bookId } = await addBook({
@@ -585,19 +618,21 @@ describe('finalizeSectioning', () => {
     expect(doc.sectionRefs).toEqual([{ bookId, sectionId: sections[0].id }]);
   });
 
-  // Important #3: the dictionary API (dictionaryapi.dev) is English-only. For
-  // a non-English book, a candidate word that happens to look like an
-  // English word (e.g. Spanish "sale", French "once") can get back a REAL
-  // but WRONG English definition instead of failing gracefully to null.
-  // Combined with the "never overwrite an existing word's definition" rule,
-  // a wrong definition becomes permanent. New words extracted from a
-  // non-English book must skip fetchDefinition entirely and store
-  // definition: null, leaving the null-backfill path (lookup route, or a
-  // future translation pipeline) as the only way to ever fill it in.
-  test('a non-English book stores definition: null for new words and never calls fetchDefinition', async () => {
+  // Definitions now come from translateWord (MyMemory), not the English-only
+  // dictionaryapi.dev, so a non-English book's new words get a real
+  // definition too, as long as the user has a nativeLanguage set — no more
+  // hard-coded English gate.
+  test('a non-English book still translates new words when nativeLanguage is set', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
     mockDetectLanguage.mockReturnValue('spanish');
+    mockGetUserProfile.mockResolvedValue({
+      nativeLanguage: 'english',
+      avatarUrl: null,
+      theme: 'system',
+      recognitionThreshold: 0.8,
+    });
+    mockTranslateWord.mockResolvedValue('a translated definition');
 
     const word = uniqueWord(0);
     const { bookId } = await addBook({
@@ -609,18 +644,26 @@ describe('finalizeSectioning', () => {
     await finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 });
 
     expect(mockFetchDefinition).not.toHaveBeenCalled();
+    expect(mockTranslateWord).toHaveBeenCalledWith(word, 'spanish', 'english');
 
     const doc = wordDoc(store, 'user-1', word, 'spanish') as any;
     expect(doc).toBeDefined();
-    expect(doc.definition).toBeNull();
+    expect(doc.definition).toBe('a translated definition');
   });
 
-  // Contrast case: an English book still calls the dictionary API normally.
-  test('an English book still calls fetchDefinition for new words', async () => {
+  // Contrast case: an English book is translated exactly the same way as any
+  // other language — no special-casing by language anymore.
+  test('an English book also gets its new words translated via translateWord, not fetchDefinition', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
     mockDetectLanguage.mockReturnValue('english');
-    mockFetchDefinition.mockResolvedValue('an english definition');
+    mockGetUserProfile.mockResolvedValue({
+      nativeLanguage: 'spanish',
+      avatarUrl: null,
+      theme: 'system',
+      recognitionThreshold: 0.8,
+    });
+    mockTranslateWord.mockResolvedValue('a translated definition');
 
     const word = uniqueWord(0);
     const { bookId } = await addBook({
@@ -631,10 +674,67 @@ describe('finalizeSectioning', () => {
     });
     await finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 });
 
-    expect(mockFetchDefinition).toHaveBeenCalledWith(word);
+    expect(mockFetchDefinition).not.toHaveBeenCalled();
+    expect(mockTranslateWord).toHaveBeenCalledWith(word, 'english', 'spanish');
 
     const doc = wordDoc(store, 'user-1', word, 'english') as any;
-    expect(doc.definition).toBe('an english definition');
+    expect(doc.definition).toBe('a translated definition');
+  });
+
+  test("a new word's definition comes from translateWord, not fetchDefinition, when nativeLanguage is set", async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockDetectLanguage.mockReturnValue('english');
+    mockGetUserProfile.mockResolvedValue({
+      nativeLanguage: 'spanish',
+      avatarUrl: null,
+      theme: 'system',
+      recognitionThreshold: 0.8,
+    });
+    mockTranslateWord.mockResolvedValue('la palabra traducida');
+
+    const word = uniqueWord(0);
+    const { bookId } = await addBook({
+      title: 'Translated Book',
+      format: 'text',
+      rawText: word,
+      userId: 'user-1',
+    });
+    await finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 });
+
+    const doc = wordDoc(store, 'user-1', word) as any;
+    expect(doc.definition).toBe('la palabra traducida');
+    expect(mockTranslateWord).toHaveBeenCalledWith(word, 'english', 'spanish');
+    expect(mockFetchDefinition).not.toHaveBeenCalled();
+  });
+
+  test('a new word gets definition: null when the user has no nativeLanguage set', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockDetectLanguage.mockReturnValue('english');
+    mockGetUserProfile.mockResolvedValue({
+      nativeLanguage: null,
+      avatarUrl: null,
+      theme: 'system',
+      recognitionThreshold: 0.8,
+    });
+    // Matches translateWord's own real behavior for a null target language
+    // (see lib/translate/translateApi.ts) — resolves to null without ever
+    // hitting the network.
+    mockTranslateWord.mockResolvedValue(null);
+
+    const word = uniqueWord(0);
+    const { bookId } = await addBook({
+      title: 'No Native Language Book',
+      format: 'text',
+      rawText: word,
+      userId: 'user-1',
+    });
+    await finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 });
+
+    const doc = wordDoc(store, 'user-1', word) as any;
+    expect(doc.definition).toBeNull();
+    expect(mockTranslateWord).toHaveBeenCalledWith(word, 'english', null);
   });
 
   test('a brand-new word has its sectionRefs entry set at create() time, before the linking batch ever commits', async () => {
@@ -721,11 +821,18 @@ describe('finalizeSectioning', () => {
       lastRating: 'good',
     });
 
-    // The dictionary lookup fails this time around; if the existing word
+    mockGetUserProfile.mockResolvedValue({
+      nativeLanguage: 'spanish',
+      avatarUrl: null,
+      theme: 'system',
+      recognitionThreshold: 0.8,
+    });
+
+    // The translation lookup fails this time around; if the existing word
     // were re-created/overwritten, its good definition would be wiped out.
-    mockFetchDefinition.mockImplementation((w: string) => {
+    mockTranslateWord.mockImplementation((w: string) => {
       if (w === existingWord) {
-        return Promise.reject(new Error('dictionary API down'));
+        return Promise.reject(new Error('translation API down'));
       }
       return Promise.resolve(`definition for ${w}`);
     });
@@ -740,8 +847,8 @@ describe('finalizeSectioning', () => {
     });
     await finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 });
 
-    // fetchDefinition is never called for the already-existing word.
-    expect(mockFetchDefinition).not.toHaveBeenCalledWith(existingWord);
+    // translateWord is never called for the already-existing word.
+    expect(mockTranslateWord.mock.calls.some(([w]) => w === existingWord)).toBe(false);
 
     const existingDoc = wordDoc(store, 'user-1', existingWord) as any;
     expect(existingDoc).toMatchObject({
