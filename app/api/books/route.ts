@@ -76,8 +76,6 @@ export async function POST(request: NextRequest) {
     format,
     rawText,
     userId: user.uid,
-    // Temporary hardcode until real language detection lands in a later plan.
-    language: 'english',
   });
 
   return NextResponse.json({ bookId }, { status: 201 });

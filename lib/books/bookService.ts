@@ -1,18 +1,30 @@
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
 import { isAlreadyExistsError } from '@/lib/firebase/errors';
-import { splitByFixedWordCount } from '@/lib/text/sectionize';
+import { Section, splitByChapters, splitByPageCount } from '@/lib/text/sectionize';
 import { extractVocabulary } from '@/lib/text/extractVocabulary';
 import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
 import { buildWordId } from '@/lib/firebase/wordId';
+import { detectLanguage } from '@/lib/text/detectLanguage';
+import {
+  detectChapterBreaksByHeading,
+  detectChapterBreaksFromTitles,
+} from '@/lib/text/detectChapters';
+import {
+  deletePendingBookText,
+  readPendingBookText,
+  savePendingBookText,
+} from '@/lib/storage/pendingBookText';
 
 export type AddBookInput = {
   title: string;
   author?: string;
-  format: 'text' | 'epub';
+  format: 'text' | 'epub' | 'pdf';
   rawText: string;
   userId: string;
-  language: string;
+  // From the epub/pdf parser's outline, when available — used to prefer
+  // detectChapterBreaksFromTitles over the plain heading scan below.
+  chapterTitles?: string[];
 };
 
 export type AddBookResult = {
@@ -97,49 +109,22 @@ function newWordDoc(params: {
   };
 }
 
-export async function addBook(input: AddBookInput): Promise<AddBookResult> {
-  const { title, author, format, rawText, userId, language } = input;
+// Refactored out of addBook's body (see AGENTS.md's TDD/no-new-abstractions
+// note — this stays a plain private helper, not a new service layer) so
+// `finalizeSectioning` below, and Plan 4's `generateBook`, can both run the
+// exact same candidate-words -> select-first -> definitions -> create() ->
+// batch-link loop without duplicating it. Behavior is unchanged from
+// today's addBook loop.
+async function extractAndLinkWords(params: {
+  sections: Section[];
+  bookId: string;
+  userId: string;
+  language: string;
+  sectionDocRefs: FirebaseFirestore.DocumentReference[];
+}): Promise<void> {
+  const { sections, bookId, userId, language, sectionDocRefs } = params;
   const db = getFirestore(getAdminApp());
-
-  // The whole book's flattened text is intentionally NOT stored here.
-  // Firestore caps a single document at 1 MiB, and a long novel's text
-  // (roughly 180k+ words) can exceed that on its own, which would make
-  // this very `.add()` call reject with an opaque error. Each section is
-  // capped at SECTION_SIZE words, so it's always far under the limit —
-  // each section doc below carries its own `text` slice instead.
-  const bookRef = await db.collection('books').add({
-    userId,
-    title,
-    author: author ?? null,
-    format,
-    language,
-    source: 'uploaded',
-    createdAt: FieldValue.serverTimestamp(),
-  });
-  const bookId = bookRef.id;
-
-  const sections = splitByFixedWordCount(rawText);
-  if (sections.length === 0) {
-    return { bookId };
-  }
-
-  const sectionsCollection = bookRef.collection('sections');
   const wordsCollection = db.collection('words');
-
-  // Create every section doc up front (order doesn't matter between them —
-  // each is addressed by its own auto-id afterward).
-  const sectionDocRefs = await Promise.all(
-    sections.map((section) =>
-      sectionsCollection.add({
-        sectionNumber: section.sectionNumber,
-        startWordIndex: section.startWordIndex,
-        endWordIndex: section.endWordIndex,
-        text: section.text,
-        status: section.sectionNumber === 1 ? 'ready_to_practice' : 'locked',
-        wordIds: [] as string[],
-      })
-    )
-  );
 
   for (let i = 0; i < sections.length; i++) {
     const section = sections[i];
@@ -210,6 +195,108 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
     }
     await batch.commit();
   }
+}
+
+export async function addBook(input: AddBookInput): Promise<AddBookResult> {
+  const { title, author, format, rawText, userId, chapterTitles } = input;
+  const db = getFirestore(getAdminApp());
+
+  const language = detectLanguage(rawText);
+  const detectedChapterBreaks = chapterTitles
+    ? detectChapterBreaksFromTitles(rawText, chapterTitles)
+    : detectChapterBreaksByHeading(rawText);
+
+  // The whole book's flattened text is intentionally NOT stored on the book
+  // doc. Firestore caps a single document at 1 MiB, and a long novel's text
+  // (roughly 180k+ words) can exceed that on its own, which would make this
+  // very `.add()` call reject with an opaque error. Sectioning (and the
+  // per-section `text` slice each section doc carries) now happens later,
+  // on demand, via `finalizeSectioning` — the raw text is stashed in
+  // Storage via `savePendingBookText` below until then.
+  const bookRef = await db.collection('books').add({
+    userId,
+    title,
+    author: author ?? null,
+    format,
+    language,
+    source: 'uploaded',
+    sectioningMethod: null,
+    pagesPerSection: null,
+    detectedChapterBreaks,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  const bookId = bookRef.id;
+
+  await savePendingBookText(userId, bookId, rawText);
 
   return { bookId };
+}
+
+export async function finalizeSectioning(params: {
+  bookId: string;
+  userId: string;
+  method: 'by_page' | 'by_chapter';
+  pagesPerSection?: number;
+}): Promise<void> {
+  const { bookId, userId, method, pagesPerSection } = params;
+  const db = getFirestore(getAdminApp());
+  const bookRef = db.collection('books').doc(bookId);
+
+  const bookSnap = await bookRef.get();
+  if (!bookSnap.exists) {
+    throw new Error('Failed to load book: no document found');
+  }
+  const bookData = bookSnap.data() as {
+    language: string;
+    detectedChapterBreaks: number[] | null;
+    sectioningMethod: string | null;
+  };
+
+  // BINDING RULING (plan preflight conflict scan, Review Focus #5): a
+  // second, accidental call to finalizeSectioning on a book that has
+  // already been finalized must be a safe no-op. Without this guard,
+  // readPendingBookText below would throw (the blob is already deleted by
+  // the first call) with an unhandled error visible to the user, and even
+  // if it didn't, re-running extraction would double up sections/words.
+  // sectioningMethod is set exactly once, at the end of a successful first
+  // finalize, so its presence is the signal this already happened.
+  if (bookData.sectioningMethod != null) {
+    return;
+  }
+
+  const rawText = await readPendingBookText(userId, bookId);
+
+  const sections =
+    method === 'by_page'
+      ? splitByPageCount(rawText, pagesPerSection ?? 1)
+      : splitByChapters(rawText, bookData.detectedChapterBreaks ?? []);
+
+  const sectionsCollection = bookRef.collection('sections');
+  const sectionDocRefs = await Promise.all(
+    sections.map((section) =>
+      sectionsCollection.add({
+        sectionNumber: section.sectionNumber,
+        startWordIndex: section.startWordIndex,
+        endWordIndex: section.endWordIndex,
+        text: section.text,
+        status: section.sectionNumber === 1 ? 'ready_to_practice' : 'locked',
+        wordIds: [] as string[],
+      })
+    )
+  );
+
+  await extractAndLinkWords({
+    sections,
+    bookId,
+    userId,
+    language: bookData.language,
+    sectionDocRefs,
+  });
+
+  await bookRef.update({
+    sectioningMethod: method,
+    pagesPerSection: method === 'by_page' ? pagesPerSection ?? 1 : null,
+  });
+
+  await deletePendingBookText(userId, bookId);
 }
