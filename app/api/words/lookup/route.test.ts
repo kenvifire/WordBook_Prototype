@@ -153,6 +153,19 @@ describe('POST /api/words/lookup', () => {
     expect(mockFetchDefinition).not.toHaveBeenCalled();
   });
 
+  test('returns 400 when language contains a slash, rather than interpolating it unchecked into the Firestore doc id', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    const response = await POST(makeRequest({ word: 'ephemeral', language: 'a/b' }));
+
+    expect(response.status).toBe(400);
+    expect(mockFetchDefinition).not.toHaveBeenCalled();
+    // Nothing should have been written anywhere, under any id shape.
+    expect(store.size).toBe(0);
+  });
+
   test('a plain lookup (no add flag) never creates a word doc, even for a brand-new word', async () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     const { db, store } = createFakeFirestore();

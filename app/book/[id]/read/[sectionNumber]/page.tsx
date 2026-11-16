@@ -139,7 +139,12 @@ export default async function ReadPage({
       <p className="leading-loose">
         {sectionWords.map((word, index) => (
           <span key={index}>
-            <WordPopup word={word} language={bookData.language} />{' '}
+            {/* Pre-v3 book docs have no `language` field at all (undefined at
+                runtime despite the required-string type above) — fall back to
+                the same temporary English default used at book-ingestion time
+                in app/api/books/route.ts, rather than sending `language:
+                undefined` and having the lookup route 400. */}
+            <WordPopup word={word} language={bookData.language ?? 'english'} />{' '}
           </span>
         ))}
       </p>

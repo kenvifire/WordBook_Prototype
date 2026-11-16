@@ -15,6 +15,14 @@ vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
 }));
 
+// Mocked so the "language fallback" test can inspect exactly what prop value
+// the page passed through, while every other test in this file still sees
+// the tapped word rendered as text (matching the real WordPopup's visible
+// output) for its own, unrelated assertions.
+vi.mock('@/components/WordPopup', () => ({
+  default: vi.fn(({ word }: { word: string; language: string }) => <span>{word}</span>),
+}));
+
 const { mockRedirect, mockNotFound } = vi.hoisted(() => ({
   mockRedirect: vi.fn((path: string) => {
     throw new Error(`NEXT_REDIRECT:${path}`);
@@ -31,10 +39,12 @@ vi.mock('next/navigation', () => ({
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuthedUser } from '@/lib/firebase/server';
+import WordPopup from '@/components/WordPopup';
 import ReadPage from './page';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
 const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
+const mockWordPopup = WordPopup as unknown as ReturnType<typeof vi.fn>;
 
 type StoredDoc = Record<string, unknown>;
 
@@ -142,6 +152,7 @@ beforeEach(() => {
   mockNotFound.mockClear();
   mockGetFirestore.mockReset();
   mockGetAuthedUser.mockReset();
+  mockWordPopup.mockClear();
 });
 
 describe('ReadPage', () => {
@@ -199,6 +210,26 @@ describe('ReadPage', () => {
     expect(screen.getByText('gamma')).toBeInTheDocument();
     expect(screen.queryByText('alpha')).not.toBeInTheDocument();
     expect(screen.queryByText('delta')).not.toBeInTheDocument();
+  });
+
+  test('falls back to english for WordPopup when the book doc has no language field (pre-v3 books)', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    // Pre-v3 book doc: no `language` field at all.
+    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'ready_to_read',
+      text: 'beta',
+    });
+
+    const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+    render(jsx);
+
+    expect(mockWordPopup).toHaveBeenCalled();
+    const props = mockWordPopup.mock.calls[0][0];
+    expect(props).toMatchObject({ word: 'beta', language: 'english' });
   });
 
   describe('prev/next navigation (I3)', () => {

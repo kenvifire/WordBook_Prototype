@@ -39,7 +39,12 @@ export const TOKEN_PATTERN_SOURCE = "[\\p{L}\\p{M}']+";
 // clitic so "don't" -> "do", "John's" -> "john", "he'll" -> "he". Returns ''
 // when nothing with a letter is left (e.g. a bare "'" from a quotation mark).
 export function normalizeToken(raw: string): string {
-  let word = normalizeQuotes(raw).toLowerCase();
+  // Collapse composed vs. decomposed Unicode accents (e.g. "café" as a
+  // single U+00E9 vs. "e" + combining U+0301) to the same NFC form first, so
+  // the two spellings of the same real word always normalize to the exact
+  // same string — otherwise they'd dedupe into two separate word docs under
+  // this app's deterministic per-user word-ID scheme.
+  let word = normalizeQuotes(raw).normalize('NFC').toLowerCase();
   word = word.replace(/^'+/, '').replace(/'+$/, '');
   word = stripClitic(word);
   word = word.replace(/'+$/, '');

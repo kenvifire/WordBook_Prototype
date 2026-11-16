@@ -48,7 +48,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'word is required' }, { status: 400 });
   }
 
-  if (!language) {
+  // Lowercase ASCII letters only, matching how 'english'/'french' etc. are
+  // written elsewhere in this plan. This also blocks a value containing '/'
+  // (or any other character) from being interpolated unchecked into
+  // buildWordId's Firestore document id, which would otherwise write to a
+  // different path (e.g. a nested subcollection) and bypass the normal rules
+  // path since this write goes through the server-side Admin SDK. It also
+  // prevents case/format variants (e.g. 'English' vs 'english') from
+  // silently forking a user's vocabulary into separate documents.
+  if (!language || !/^[a-z]+$/.test(language)) {
     return NextResponse.json({ error: 'language is required' }, { status: 400 });
   }
 
