@@ -1,11 +1,10 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
+import { getUserProfile } from '@/lib/users/userProfile';
 
 export type WordForRecognition = {
   lastRating: string | null;
 };
-
-const UNLOCK_THRESHOLD = 0.8;
 
 export function computeRecognitionRate(words: WordForRecognition[]): number {
   // Review Focus #5: a section with zero vocabulary words (e.g. every word in
@@ -50,6 +49,13 @@ export async function maybeUnlockNextSection(bookId: string, sectionId: string):
     return;
   }
 
+  const bookSnap = await db.collection('books').doc(bookId).get();
+  if (!bookSnap.exists) {
+    throw new Error('Failed to load book: no document found');
+  }
+  const { userId } = bookSnap.data() as { userId: string };
+  const { recognitionThreshold } = await getUserProfile(userId);
+
   let wordRows: { lastRating: string | null }[] = [];
   if (wordIds.length > 0) {
     const wordsCollection = db.collection('words');
@@ -64,7 +70,7 @@ export async function maybeUnlockNextSection(bookId: string, sectionId: string):
 
   const rate = computeRecognitionRate(wordRows);
 
-  if (rate < UNLOCK_THRESHOLD) {
+  if (rate < recognitionThreshold) {
     return;
   }
 
