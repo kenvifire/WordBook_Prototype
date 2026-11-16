@@ -232,6 +232,25 @@ describe('ReadPage', () => {
     expect(props).toMatchObject({ word: 'beta', language: 'english' });
   });
 
+  test('I1: passes bookId and sectionId through to WordPopup so a reader-added word can be linked to this section', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'ready_to_read',
+      text: 'beta',
+    });
+
+    const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+    render(jsx);
+
+    expect(mockWordPopup).toHaveBeenCalled();
+    const props = mockWordPopup.mock.calls[0][0];
+    expect(props).toMatchObject({ bookId: 'book-1', sectionId: 'section-1' });
+  });
+
   describe('prev/next navigation (I3)', () => {
     test('shows a previous-section link once past section 1, and no next-section link when there is no next section', async () => {
       const { db, store } = createFakeFirestore();

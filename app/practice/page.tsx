@@ -10,7 +10,42 @@ type BookRow = {
   title: string;
   author: string | null;
   count: number;
+  practiceable: boolean;
 };
+
+type SectionDoc = {
+  sectionNumber: number;
+  status: string;
+  wordIds?: string[];
+};
+
+// I2: mirrors the zero-word-unlocking-section check app/practice/[bookId]/page.tsx
+// already runs itself (via maybeUnlockNextSection) — a section with zero
+// vocabulary words still needs to be reachable so that page's
+// unlock-and-redirect logic actually gets a chance to fire. Without this,
+// getPracticeQueueForBook's queue is empty for such a book and the list page
+// would wrongly show "Read instead", with no link ever reaching the page
+// that knows how to unlock it.
+async function hasZeroWordUnlockingSection(
+  db: ReturnType<typeof getFirestore>,
+  bookId: string
+): Promise<boolean> {
+  const sectionsQuery = await db
+    .collection('books')
+    .doc(bookId)
+    .collection('sections')
+    .where('status', '==', 'ready_to_practice')
+    .orderBy('sectionNumber', 'asc')
+    .limit(1)
+    .get();
+
+  if (sectionsQuery.empty) {
+    return false;
+  }
+
+  const sectionData = sectionsQuery.docs[0].data() as SectionDoc;
+  return (sectionData.wordIds ?? []).length === 0;
+}
 
 export default async function PracticeTabPage() {
   const user = await getAuthedUser();
@@ -33,11 +68,17 @@ export default async function PracticeTabPage() {
     booksSnapshot.docs.map(async (doc) => {
       const data = doc.data() as { title: string; author?: string | null };
       const queue = await getPracticeQueueForBook(user.uid, doc.id);
+      // I2: an empty queue can still mean there's something practiceable —
+      // a zero-word section sitting at ready_to_practice with nothing to
+      // rate (see hasZeroWordUnlockingSection above).
+      const practiceable =
+        queue.length > 0 || (await hasZeroWordUnlockingSection(db, doc.id));
       return {
         id: doc.id,
         title: data.title,
         author: data.author ?? null,
         count: queue.length,
+        practiceable,
       };
     })
   );
@@ -58,7 +99,7 @@ export default async function PracticeTabPage() {
                 </p>
               </div>
 
-              {book.count > 0 ? (
+              {book.practiceable ? (
                 <Link
                   href={`/practice/${book.id}`}
                   className="shrink-0 rounded bg-black px-3 py-1 text-sm font-medium text-white"

@@ -76,6 +76,31 @@ describe('SettingsForm', () => {
     await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1));
   });
 
+  test('C1: omits nativeLanguage from the PATCH body when it is empty, instead of sending an empty string', async () => {
+    mockFetchOnce({ ok: true, json: async () => ({ ok: true }) });
+
+    const user = userEvent.setup();
+    render(
+      <SettingsForm
+        initialProfile={{ ...baseProfile, nativeLanguage: null }}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+
+    const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(init.body as string);
+
+    expect(body).not.toHaveProperty('nativeLanguage');
+    // theme/threshold must still be sent normally.
+    expect(body.theme).toBe('light');
+    expect(body.recognitionThresholdPercent).toBe(80);
+
+    await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1));
+  });
+
   test('selecting a different theme and saving sends that theme', async () => {
     mockFetchOnce({ ok: true, json: async () => ({ ok: true }) });
 

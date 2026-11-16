@@ -284,6 +284,44 @@ describe('getPracticeQueueForBook', () => {
     expect(result).toEqual([]);
   });
 
+  test('I1: includes a never-rated reader-added word whose sectionRefs point at this book', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    putWord(store, 'w1', {
+      userId: 'u1',
+      word: 'reader-added',
+      definition: 'def-reader-added',
+      lastRating: null,
+      addedFromReader: true,
+      nextReviewDate: '2020-01-01', // stamped to "today" at creation time
+      sectionRefs: [{ bookId: 'book-1', sectionId: 'any' }],
+    });
+
+    const result = await getPracticeQueueForBook('u1', 'book-1');
+
+    expect(result.map((w) => w.id)).toEqual(['w1']);
+  });
+
+  test('I1: excludes a never-rated reader-added word whose sectionRefs point at a different book', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    putWord(store, 'w1', {
+      userId: 'u1',
+      word: 'reader-added-elsewhere',
+      definition: 'def-elsewhere',
+      lastRating: null,
+      addedFromReader: true,
+      nextReviewDate: '2020-01-01',
+      sectionRefs: [{ bookId: 'book-2', sectionId: 'any' }],
+    });
+
+    const result = await getPracticeQueueForBook('u1', 'book-1');
+
+    expect(result).toEqual([]);
+  });
+
   test('excludes a due word with no rating yet (never-practiced extraction-time word)', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);

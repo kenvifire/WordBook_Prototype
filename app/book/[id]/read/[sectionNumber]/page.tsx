@@ -144,7 +144,12 @@ export default async function ReadPage({
                 the same temporary English default used at book-ingestion time
                 in app/api/books/route.ts, rather than sending `language:
                 undefined` and having the lookup route 400. */}
-            <WordPopup word={word} language={bookData.language ?? 'english'} />{' '}
+            <WordPopup
+              word={word}
+              language={bookData.language ?? 'english'}
+              bookId={id}
+              sectionId={sectionId}
+            />{' '}
           </span>
         ))}
       </p>

@@ -215,6 +215,48 @@ describe('POST /api/words/lookup', () => {
     expect(stored.bookId).toBeUndefined();
   });
 
+  test('I1: add: true with bookId/sectionId links the new word to that section instead of leaving sectionRefs empty', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockFetchDefinition.mockResolvedValue('lasting a short time');
+
+    const response = await POST(
+      makeRequest({
+        word: 'Ephemeral,',
+        add: true,
+        language: 'english',
+        bookId: 'book-1',
+        sectionId: 'section-1',
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ word: 'ephemeral', definition: 'lasting a short time' });
+
+    const stored = getWord(store, buildWordId('user-1', 'english', 'ephemeral'));
+    expect(stored).toMatchObject({
+      sectionRefs: [{ bookId: 'book-1', sectionId: 'section-1' }],
+      addedFromReader: true,
+    });
+  });
+
+  test('I1: add: true without bookId/sectionId still creates the word with empty sectionRefs (no 400)', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockFetchDefinition.mockResolvedValue('lasting a short time');
+
+    const response = await POST(
+      makeRequest({ word: 'ephemeral', add: true, language: 'english' })
+    );
+
+    expect(response.status).toBe(200);
+    const stored = getWord(store, buildWordId('user-1', 'english', 'ephemeral'));
+    expect(stored).toMatchObject({ sectionRefs: [] });
+  });
+
   test('lookup builds the wordId using the given language', async () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     const { db, store } = createFakeFirestore();

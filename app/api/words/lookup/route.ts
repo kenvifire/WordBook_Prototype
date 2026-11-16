@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { word?: unknown; add?: unknown; language?: unknown }
+    | { word?: unknown; add?: unknown; language?: unknown; bookId?: unknown; sectionId?: unknown }
     | null;
   const rawWord = typeof body?.word === 'string' ? body.word : '';
   const word = normalizeWord(rawWord);
@@ -43,6 +43,13 @@ export async function POST(request: NextRequest) {
   // only thing that creates a new word doc.
   const add = body?.add === true;
   const language = typeof body?.language === 'string' ? body.language : null;
+  // I1: optional — a plain tap-to-define request doesn't need these, only
+  // the add:true new-word-creation path below does (to link the new word
+  // back to the book/section it was added from, so it doesn't vanish from
+  // every per-book practice queue forever). Absent/non-string values are
+  // treated as "not provided" rather than 400ing the whole request.
+  const bookId = typeof body?.bookId === 'string' ? body.bookId : null;
+  const sectionId = typeof body?.sectionId === 'string' ? body.sectionId : null;
 
   if (!word) {
     return NextResponse.json({ error: 'word is required' }, { status: 400 });
@@ -117,22 +124,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ word, definition });
   }
 
-  // A reader-added word has no originating book or section — unlike
-  // bookService's extraction-time words, which always get a non-empty
-  // sectionRefs at creation. `sectionRefs` is NOT a reliable long-term
-  // signal of "reader-added" though: bookService.addBook grows an
-  // EXISTING word's sectionRefs on every re-extraction, including a word
-  // that originated here. `addedFromReader` is the immutable signal
-  // instead — set once, here, at creation, and never written again by
-  // any later code path (including this route's own existing-word
-  // branches above). /review's controller reads this flag, not
-  // sectionRefs, to decide whether a never-rated word should still show up.
+  // I1: a reader-added word is linked to the book/section it was added
+  // from (when the caller provided one) so it stays reachable from that
+  // book's practice queue instead of vanishing the moment it's added —
+  // see getPracticeQueueForBook's addedFromReader carve-out. `sectionRefs`
+  // is NOT a reliable long-term signal of "reader-added" though:
+  // bookService.addBook grows an EXISTING word's sectionRefs on every
+  // re-extraction, including a word that originated here. `addedFromReader`
+  // is the immutable signal instead — set once, here, at creation, and
+  // never written again by any later code path (including this route's
+  // own existing-word branches above). getPracticeQueueForBook reads this
+  // flag, not sectionRefs.length, to decide whether a never-rated word
+  // should still show up in its book's practice queue.
   const newWordDoc: WordDoc = {
     userId: user.uid,
     word,
     language,
     definition,
-    sectionRefs: [],
+    sectionRefs: bookId && sectionId ? [{ bookId, sectionId }] : [],
     repetitions: 0,
     easeFactor: 2.5,
     intervalDays: 1,

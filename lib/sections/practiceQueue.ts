@@ -7,6 +7,7 @@ type WordDoc = {
   definition: string | null;
   lastRating: string | null;
   sectionRefs?: { bookId: string; sectionId: string }[];
+  addedFromReader?: boolean;
 };
 
 type SectionDoc = {
@@ -63,10 +64,15 @@ export async function getPracticeQueueForBook(
   const dueWordIds: string[] = dueSnapshot.docs
     .filter((doc) => {
       const data = doc.data() as WordDoc;
-      return (
-        data.lastRating !== null &&
-        (data.sectionRefs ?? []).some((ref) => ref.bookId === bookId)
-      );
+      const linkedToThisBook = (data.sectionRefs ?? []).some((ref) => ref.bookId === bookId);
+      // I1: a reader-added word (`addedFromReader: true`) is created with
+      // `lastRating: null` and would otherwise never satisfy
+      // `lastRating !== null` below, making it permanently unreachable the
+      // moment it's added — there's no global review view any more for it
+      // to surface in instead. Keep it in this book's queue as long as it's
+      // linked to this book, even though it's never been rated.
+      const neverRatedReaderAdded = data.addedFromReader === true && data.lastRating === null;
+      return linkedToThisBook && (data.lastRating !== null || neverRatedReaderAdded);
     })
     .map((doc) => doc.id);
 

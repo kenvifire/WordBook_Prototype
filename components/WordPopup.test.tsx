@@ -20,7 +20,9 @@ describe('WordPopup', () => {
     });
     const user = userEvent.setup();
 
-    render(<WordPopup word="ephemeral" language="english" />);
+    render(
+      <WordPopup word="ephemeral" language="english" bookId="book-1" sectionId="section-1" />
+    );
 
     await user.click(screen.getByText('ephemeral'));
 
@@ -28,7 +30,13 @@ describe('WordPopup', () => {
       '/api/words/lookup',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ word: 'ephemeral', add: false, language: 'english' }),
+        body: JSON.stringify({
+          word: 'ephemeral',
+          add: false,
+          language: 'english',
+          bookId: 'book-1',
+          sectionId: 'section-1',
+        }),
       })
     );
 
@@ -43,7 +51,7 @@ describe('WordPopup', () => {
     });
     const user = userEvent.setup();
 
-    render(<WordPopup word="chat" language="french" />);
+    render(<WordPopup word="chat" language="french" bookId="book-1" sectionId="section-1" />);
 
     await user.click(screen.getByText('chat'));
 
@@ -51,7 +59,41 @@ describe('WordPopup', () => {
       '/api/words/lookup',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ word: 'chat', add: false, language: 'french' }),
+        body: JSON.stringify({
+          word: 'chat',
+          add: false,
+          language: 'french',
+          bookId: 'book-1',
+          sectionId: 'section-1',
+        }),
+      })
+    );
+  });
+
+  test('I1: WordPopup sends bookId/sectionId props in the lookup request body', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ word: 'ephemeral', definition: 'lasting a short time' }),
+    });
+    const user = userEvent.setup();
+
+    render(
+      <WordPopup word="ephemeral" language="english" bookId="book-42" sectionId="section-7" />
+    );
+
+    await user.click(screen.getByText('ephemeral'));
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/words/lookup',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          word: 'ephemeral',
+          add: false,
+          language: 'english',
+          bookId: 'book-42',
+          sectionId: 'section-7',
+        }),
       })
     );
   });
@@ -63,7 +105,9 @@ describe('WordPopup', () => {
     });
     const user = userEvent.setup();
 
-    render(<WordPopup word="ephemeral" language="english" />);
+    render(
+      <WordPopup word="ephemeral" language="english" bookId="book-1" sectionId="section-1" />
+    );
 
     await user.click(screen.getByText('ephemeral'));
     await screen.findByText('lasting a short time');
@@ -75,7 +119,13 @@ describe('WordPopup', () => {
       '/api/words/lookup',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ word: 'ephemeral', add: true, language: 'english' }),
+        body: JSON.stringify({
+          word: 'ephemeral',
+          add: true,
+          language: 'english',
+          bookId: 'book-1',
+          sectionId: 'section-1',
+        }),
       })
     );
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -86,7 +136,7 @@ describe('WordPopup', () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false });
     const user = userEvent.setup();
 
-    render(<WordPopup word="gloaming" language="english" />);
+    render(<WordPopup word="gloaming" language="english" bookId="book-1" sectionId="section-1" />);
 
     await user.click(screen.getByText('gloaming'));
 
@@ -100,7 +150,7 @@ describe('WordPopup', () => {
     });
     const user = userEvent.setup();
 
-    render(<WordPopup word="lucid" language="english" />);
+    render(<WordPopup word="lucid" language="english" bookId="book-1" sectionId="section-1" />);
 
     const wordButton = screen.getByRole('button', { name: 'lucid' });
     await user.click(wordButton);
@@ -118,7 +168,7 @@ describe('WordPopup', () => {
     });
     const user = userEvent.setup();
 
-    render(<WordPopup word="gloaming" language="english" />);
+    render(<WordPopup word="gloaming" language="english" bookId="book-1" sectionId="section-1" />);
 
     await user.click(screen.getByText('gloaming'));
     expect(await screen.findByText('twilight')).toBeInTheDocument();

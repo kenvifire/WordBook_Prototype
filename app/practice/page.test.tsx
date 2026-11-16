@@ -35,11 +35,15 @@ const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
 const mockGetPracticeQueueForBook = getPracticeQueueForBook as unknown as ReturnType<typeof vi.fn>;
 
 type BookRow = { id: string; userId: string; title: string; author?: string | null };
+type SectionRow = { id: string; sectionNumber: number; status: string; wordIds?: string[] };
 
-// A minimal fake Firestore supporting exactly the one query this page needs:
+// A minimal fake Firestore supporting the two query shapes this page needs:
 // `books` collection filtered by `userId == uid` (mirrors the style already
-// used in app/bookshelf/page.test.tsx).
-function createFakeFirestore(books: BookRow[]) {
+// used in app/bookshelf/page.test.tsx), plus, per book,
+// `books/{bookId}/sections` filtered by `status == 'ready_to_practice'`,
+// ordered by sectionNumber, limited to 1 — the same zero-word-section check
+// getPracticeQueueForBook and app/practice/[bookId]/page.tsx already do.
+function createFakeFirestore(books: BookRow[], sectionsByBook: Record<string, SectionRow[]> = {}) {
   return {
     collection(name: string) {
       if (name !== 'books') throw new Error(`Unexpected top-level collection: ${name}`);
@@ -57,6 +61,44 @@ function createFakeFirestore(books: BookRow[]) {
                 .filter((b) => b.userId === value)
                 .map((b) => ({ id: b.id, data: () => ({ ...b }) }));
               return { empty: docs.length === 0, docs };
+            },
+          };
+        },
+        doc(bookId: string) {
+          return {
+            collection(subName: string) {
+              if (subName !== 'sections') {
+                throw new Error(`Unexpected subcollection in fake: ${subName}`);
+              }
+              const sections = sectionsByBook[bookId] ?? [];
+              function makeQuery(filtered: SectionRow[], limitN?: number) {
+                return {
+                  where(field: string, op: string, value: unknown) {
+                    if (field !== 'status' || op !== '==') {
+                      throw new Error(`Unsupported filter in fake: ${field} ${op}`);
+                    }
+                    return makeQuery(
+                      filtered.filter((s) => s.status === value),
+                      limitN
+                    );
+                  },
+                  orderBy() {
+                    return makeQuery(
+                      filtered.slice().sort((a, b) => a.sectionNumber - b.sectionNumber),
+                      limitN
+                    );
+                  },
+                  limit(n: number) {
+                    return makeQuery(filtered, n);
+                  },
+                  async get() {
+                    const limited = limitN !== undefined ? filtered.slice(0, limitN) : filtered;
+                    const docs = limited.map((s) => ({ id: s.id, data: () => ({ ...s }) }));
+                    return { empty: docs.length === 0, docs };
+                  },
+                };
+              }
+              return makeQuery(sections);
             },
           };
         },
@@ -106,6 +148,27 @@ describe('PracticeTabPage', () => {
     const readLink = screen.getByRole('link', { name: /read instead/i });
     expect(readLink).toHaveAttribute('href', '/book/book-1');
     expect(screen.queryByRole('link', { name: /^practice$/i })).not.toBeInTheDocument();
+  });
+
+  test('I2: a book with an empty due-words queue AND a zero-word ready_to_practice section shows a Practice link, not Read instead', async () => {
+    const db = createFakeFirestore(
+      [{ id: 'book-1', userId: 'user-1', title: 'Book One' }],
+      {
+        'book-1': [
+          { id: 'section-1', sectionNumber: 1, status: 'ready_to_practice', wordIds: [] },
+        ],
+      }
+    );
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    mockGetPracticeQueueForBook.mockResolvedValue([]);
+
+    const jsx = await PracticeTabPage();
+    render(jsx);
+
+    const practiceLink = screen.getByRole('link', { name: /^practice$/i });
+    expect(practiceLink).toHaveAttribute('href', '/practice/book-1');
+    expect(screen.queryByRole('link', { name: /read instead/i })).not.toBeInTheDocument();
   });
 
   test('redirects to /login when there is no authed user', async () => {

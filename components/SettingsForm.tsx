@@ -31,14 +31,24 @@ export default function SettingsForm({ initialProfile }: Props) {
     setSubmitting(true);
 
     try {
+      // C1: an empty (or whitespace-only) nativeLanguage is what a brand-new
+      // user's profile starts as (nativeLanguage: null -> '' in state here).
+      // The API route 400s on an empty-string nativeLanguage, so sending it
+      // at all would make saving ANY settings change fail for such a user.
+      // Omit the field entirely in that case rather than sending ''.
+      const trimmedNativeLanguage = nativeLanguage.trim();
+      const body: Record<string, unknown> = {
+        theme,
+        recognitionThresholdPercent: thresholdPercent,
+      };
+      if (trimmedNativeLanguage.length > 0) {
+        body.nativeLanguage = nativeLanguage;
+      }
+
       const res = await fetch('/api/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nativeLanguage,
-          theme,
-          recognitionThresholdPercent: thresholdPercent,
-        }),
+        body: JSON.stringify(body),
       });
 
       let data: { error?: string } = {};
