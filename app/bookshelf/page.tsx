@@ -3,7 +3,9 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
 import { getAuthedUser } from '@/lib/firebase/server';
 import AddBookForm from '@/components/AddBookForm';
+import GenerateBookForm from '@/components/GenerateBookForm';
 import BookshelfList, { type BookshelfBook } from '@/components/BookshelfList';
+import BookshelfPendingPoller from '@/components/BookshelfPendingPoller';
 
 // Sections with these statuses have cleared the recognition-rate gate and
 // are unlocked for reading (see AGENTS.md's unlock flow: locked ->
@@ -33,6 +35,7 @@ export default async function BookshelfPage() {
         language: string;
         source?: string;
         sectioningMethod?: string | null;
+        generationStatus?: 'pending' | 'ready' | 'failed';
       };
 
       const sectionsSnapshot = await db.collection('books').doc(doc.id).collection('sections').get();
@@ -56,15 +59,21 @@ export default async function BookshelfPage() {
         sectionsTotal,
         sectionsUnlocked,
         needsSetup,
+        generationStatus: data.generationStatus,
       };
     })
   );
+
+  const hasPendingGeneration = books.some((book) => book.generationStatus === 'pending');
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col px-4 py-8">
       <h1 className="mb-6 text-2xl font-semibold">Bookshelf</h1>
 
+      <BookshelfPendingPoller hasPending={hasPendingGeneration} />
+
       <AddBookForm />
+      <GenerateBookForm />
 
       {books.length > 0 ? (
         <BookshelfList books={books} />

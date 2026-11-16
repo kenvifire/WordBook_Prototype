@@ -12,15 +12,16 @@ vi.mock('@/lib/firebase/server', () => ({
   getAuthedUser: vi.fn(),
 }));
 
-const { mockRedirect } = vi.hoisted(() => ({
+const { mockRedirect, mockRefresh } = vi.hoisted(() => ({
   mockRedirect: vi.fn((path: string) => {
     throw new Error(`NEXT_REDIRECT:${path}`);
   }),
+  mockRefresh: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({
   redirect: mockRedirect,
-  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
+  useRouter: () => ({ refresh: mockRefresh, push: vi.fn() }),
 }));
 
 import { getFirestore } from 'firebase-admin/firestore';
@@ -39,6 +40,7 @@ type BookRow = {
   createdAt?: unknown;
   source?: string;
   sectioningMethod?: string | null;
+  generationStatus?: 'pending' | 'ready' | 'failed';
 };
 
 type SectionRow = { status: string };
@@ -90,6 +92,7 @@ function createFakeFirestore(books: BookRow[], sectionsByBookId: Record<string, 
 
 beforeEach(() => {
   mockRedirect.mockClear();
+  mockRefresh.mockClear();
   mockGetFirestore.mockReset();
   mockGetAuthedUser.mockReset();
 });
@@ -159,6 +162,113 @@ describe('BookshelfPage', () => {
 
     expect(screen.getByText('Not yet started')).toBeInTheDocument();
     expect(screen.getByText('1 of 2 sections unlocked')).toBeInTheDocument();
+  });
+
+  test('a book card with generationStatus: "pending" shows a "generating…" placeholder instead of its progress indicator', async () => {
+    const db = createFakeFirestore(
+      [
+        {
+          id: 'book-gen',
+          userId: 'user-1',
+          title: 'A Mystery On A Train',
+          language: 'spanish',
+          source: 'ai_generated',
+          generationStatus: 'pending',
+        },
+      ],
+      { 'book-gen': [] }
+    );
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const jsx = await BookshelfPage();
+    render(jsx);
+
+    expect(screen.getByText('A Mystery On A Train')).toBeInTheDocument();
+    expect(screen.getByText(/generating/i)).toBeInTheDocument();
+    expect(screen.queryByText(/sections unlocked/)).not.toBeInTheDocument();
+    // Per the known gap: a pending/failed card must not link anywhere —
+    // Book Detail has no awareness of generationStatus yet.
+    expect(screen.queryByRole('link', { name: /a mystery on a train/i })).not.toBeInTheDocument();
+  });
+
+  test('a book card with generationStatus: "failed" shows a visible error state, not a silent disappearance', async () => {
+    const db = createFakeFirestore(
+      [
+        {
+          id: 'book-failed',
+          userId: 'user-1',
+          title: 'A Mystery On A Train',
+          language: 'spanish',
+          source: 'ai_generated',
+          generationStatus: 'failed',
+        },
+      ],
+      { 'book-failed': [] }
+    );
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const jsx = await BookshelfPage();
+    render(jsx);
+
+    expect(screen.getByText('A Mystery On A Train')).toBeInTheDocument();
+    expect(screen.getByText(/fail/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /a mystery on a train/i })).not.toBeInTheDocument();
+  });
+
+  test('the Bookshelf polls (re-fetches) while any book is pending, and stops once none are', async () => {
+    vi.useFakeTimers();
+    try {
+      const pendingDb = createFakeFirestore(
+        [
+          {
+            id: 'book-gen',
+            userId: 'user-1',
+            title: 'Pending Book',
+            language: 'english',
+            source: 'ai_generated',
+            generationStatus: 'pending',
+          },
+        ],
+        { 'book-gen': [] }
+      );
+      mockGetFirestore.mockReturnValue(pendingDb);
+      mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+      const firstJsx = await BookshelfPage();
+      const { rerender } = render(firstJsx);
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(mockRefresh).toHaveBeenCalledTimes(1);
+
+      // Simulate the effect of that refresh: the server now reports
+      // generation finished, so the parent re-renders with a prop that no
+      // longer contains a pending book.
+      const readyDb = createFakeFirestore(
+        [
+          {
+            id: 'book-gen',
+            userId: 'user-1',
+            title: 'Pending Book',
+            language: 'english',
+            source: 'ai_generated',
+            generationStatus: 'ready',
+          },
+        ],
+        { 'book-gen': [{ status: 'locked' }] }
+      );
+      mockGetFirestore.mockReturnValue(readyDb);
+
+      const secondJsx = await BookshelfPage();
+      rerender(secondJsx);
+
+      await vi.advanceTimersByTimeAsync(10000);
+      // No further refreshes once no book is pending anymore.
+      expect(mockRefresh).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('redirects to /login when there is no authed user', async () => {
