@@ -1,7 +1,7 @@
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
 import { isAlreadyExistsError } from '@/lib/firebase/errors';
-import { splitIntoSections } from '@/lib/text/sectionize';
+import { splitByFixedWordCount } from '@/lib/text/sectionize';
 import { extractVocabulary } from '@/lib/text/extractVocabulary';
 import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
 import { buildWordId } from '@/lib/firebase/wordId';
@@ -118,7 +118,7 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
   });
   const bookId = bookRef.id;
 
-  const sections = splitIntoSections(rawText);
+  const sections = splitByFixedWordCount(rawText);
   if (sections.length === 0) {
     return { bookId };
   }
