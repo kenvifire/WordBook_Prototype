@@ -248,6 +248,40 @@ describe('POST /api/books', () => {
     expect(mockParseEpub).not.toHaveBeenCalled();
   });
 
+  // Minor #6: the .pdf branch previously took `title` straight from the
+  // form with no fallback, so an empty/missing title field saved the book
+  // with an empty title. Mirror the filename-derived fallback: when the
+  // title field is empty, fall back to the uploaded file's name with its
+  // extension stripped.
+  test('upload route falls back to the filename (minus extension) when the .pdf title field is empty', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    mockParsePdf.mockResolvedValue({
+      text: 'flattened pdf text',
+      pageTexts: ['flattened pdf text'],
+      outline: null,
+    });
+    mockAddBook.mockResolvedValue({ bookId: 'book-999' });
+
+    const formData = new FormData();
+    formData.set('title', '');
+    const file = new File(['fake pdf bytes'], 'my-great-novel.pdf', { type: 'application/pdf' });
+    formData.set('file', file);
+
+    const response = await POST(makeRequest(formData));
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body).toEqual({ bookId: 'book-999' });
+    expect(mockAddBook).toHaveBeenCalledWith({
+      title: 'my-great-novel',
+      author: undefined,
+      format: 'pdf',
+      rawText: 'flattened pdf text',
+      userId: 'user-1',
+      chapterTitles: undefined,
+    });
+  });
+
   test('upload route rejects a .pdf with no extractable text with a 400 and clear message', async () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     mockParsePdf.mockRejectedValue(

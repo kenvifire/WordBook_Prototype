@@ -116,7 +116,10 @@ describe('POST /api/books/[bookId]/sectioning', () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-    putBook(store, 'book-1', { userId: 'user-1' });
+    // detectedChapterBreaks must be non-null for a by_chapter request to be
+    // accepted (see the dedicated test below) — a real book doc always has
+    // this field set (array or null) by addBook.
+    putBook(store, 'book-1', { userId: 'user-1', detectedChapterBreaks: [0, 42] });
     mockFinalizeSectioning.mockResolvedValue(undefined);
 
     const response = await POST(
@@ -177,6 +180,84 @@ describe('POST /api/books/[bookId]/sectioning', () => {
 
     expect(response.status).toBe(400);
     expect(mockFinalizeSectioning).not.toHaveBeenCalled();
+  });
+
+  // Important #4: the "by chapter" button is already hidden client-side
+  // when detectedChapterBreaks is null, but a direct API call could still
+  // request it — finalizeSectioning would then fall back to one giant
+  // section spanning the entire book. Reject it server-side too.
+  test('rejects method: by_chapter with 400 when the book has no detectedChapterBreaks', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1', detectedChapterBreaks: null });
+
+    const response = await POST(
+      makeRequest('book-1', { method: 'by_chapter' }),
+      makeParams('book-1')
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockFinalizeSectioning).not.toHaveBeenCalled();
+  });
+
+  test('accepts method: by_chapter when the book has detectedChapterBreaks', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1', detectedChapterBreaks: [0, 42] });
+    mockFinalizeSectioning.mockResolvedValue(undefined);
+
+    const response = await POST(
+      makeRequest('book-1', { method: 'by_chapter' }),
+      makeParams('book-1')
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockFinalizeSectioning).toHaveBeenCalledWith({
+      bookId: 'book-1',
+      userId: 'user-1',
+      method: 'by_chapter',
+      pagesPerSection: undefined,
+    });
+  });
+
+  // Important #4 (part 2): the route previously accepted any positive
+  // integer pagesPerSection, with no upper bound.
+  test('rejects pagesPerSection above 50 with a 400', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1' });
+
+    const response = await POST(
+      makeRequest('book-1', { method: 'by_page', pagesPerSection: 51 }),
+      makeParams('book-1')
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockFinalizeSectioning).not.toHaveBeenCalled();
+  });
+
+  test('accepts pagesPerSection of exactly 50 (boundary case)', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1' });
+    mockFinalizeSectioning.mockResolvedValue(undefined);
+
+    const response = await POST(
+      makeRequest('book-1', { method: 'by_page', pagesPerSection: 50 }),
+      makeParams('book-1')
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockFinalizeSectioning).toHaveBeenCalledWith({
+      bookId: 'book-1',
+      userId: 'user-1',
+      method: 'by_page',
+      pagesPerSection: 50,
+    });
   });
 
   test('returns 401 when there is no authenticated user', async () => {

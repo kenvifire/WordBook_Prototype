@@ -42,7 +42,10 @@ export async function POST(
     return NextResponse.json({ error: 'Book not found' }, { status: 404 });
   }
 
-  const bookData = bookSnap.data() as { userId: string };
+  const bookData = bookSnap.data() as {
+    userId: string;
+    detectedChapterBreaks: number[] | null;
+  };
 
   if (bookData.userId !== user.uid) {
     return NextResponse.json({ error: 'Book not found' }, { status: 404 });
@@ -61,10 +64,26 @@ export async function POST(
   }
   const method = body.method;
 
+  // Important #4: the client already hides the "by chapter" button when
+  // detectedChapterBreaks is null, but a direct API call could still
+  // request it — finalizeSectioning would then fall back to one giant
+  // section spanning the entire book.
+  if (method === 'by_chapter' && bookData.detectedChapterBreaks == null) {
+    return NextResponse.json({ error: 'No chapter breaks detected for this book' }, { status: 400 });
+  }
+
   let pagesPerSection: number | undefined;
   if (body.pagesPerSection !== undefined) {
     const value = body.pagesPerSection;
-    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    // Important #4: cap pagesPerSection so a caller can't request an
+    // unbounded number of pages jammed into one section.
+    const MAX_PAGES_PER_SECTION = 50;
+    if (
+      typeof value !== 'number' ||
+      !Number.isInteger(value) ||
+      value < 1 ||
+      value > MAX_PAGES_PER_SECTION
+    ) {
       return NextResponse.json({ error: 'Invalid pagesPerSection' }, { status: 400 });
     }
     pagesPerSection = value;

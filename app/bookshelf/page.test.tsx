@@ -37,6 +37,8 @@ type BookRow = {
   author?: string | null;
   language: string;
   createdAt?: unknown;
+  source?: string;
+  sectioningMethod?: string | null;
 };
 
 type SectionRow = { status: string };
@@ -118,6 +120,45 @@ describe('BookshelfPage', () => {
 
     expect(screen.queryByText('The English Book')).not.toBeInTheDocument();
     expect(screen.getByText('El Libro Espanol')).toBeInTheDocument();
+  });
+
+  // Minor #5: an uploaded book that hasn't finished its deferred-sectioning
+  // setup yet (source: 'uploaded', sectioningMethod still null) has zero
+  // sections — this must surface as needsSetup: true so the list component
+  // can show "Not yet started" instead of "0 of 0 sections unlocked".
+  test('a book with source: "uploaded" and sectioningMethod: null shows "Not yet started"', async () => {
+    const db = createFakeFirestore(
+      [
+        {
+          id: 'book-pending',
+          userId: 'user-1',
+          title: 'Pending Book',
+          language: 'english',
+          source: 'uploaded',
+          sectioningMethod: null,
+        },
+        {
+          id: 'book-ready',
+          userId: 'user-1',
+          title: 'Ready Book',
+          language: 'english',
+          source: 'uploaded',
+          sectioningMethod: 'by_page',
+        },
+      ],
+      {
+        'book-pending': [],
+        'book-ready': [{ status: 'ready_to_read' }, { status: 'locked' }],
+      }
+    );
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const jsx = await BookshelfPage();
+    render(jsx);
+
+    expect(screen.getByText('Not yet started')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 sections unlocked')).toBeInTheDocument();
   });
 
   test('redirects to /login when there is no authed user', async () => {

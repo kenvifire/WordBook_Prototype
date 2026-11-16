@@ -10,6 +10,11 @@ export type BookshelfBook = {
   language: string;
   sectionsTotal: number;
   sectionsUnlocked: number;
+  // Minor #5: true for an uploaded book that hasn't finished its
+  // deferred-sectioning setup yet (source: 'uploaded' and
+  // sectioningMethod still null) — such a book has zero sections, which
+  // would otherwise render as the misleading "0 of 0 sections unlocked".
+  needsSetup: boolean;
 };
 
 const ALL = 'All';
@@ -58,7 +63,9 @@ export default function BookshelfList({ books }: { books: BookshelfBook[] }) {
                   <span className="text-sm text-gray-600">by {book.author}</span>
                 )}
                 <p className="mt-1 text-sm text-gray-600">
-                  {book.sectionsUnlocked} of {book.sectionsTotal} sections unlocked
+                  {book.needsSetup
+                    ? 'Not yet started'
+                    : `${book.sectionsUnlocked} of ${book.sectionsTotal} sections unlocked`}
                 </p>
               </Link>
             </li>

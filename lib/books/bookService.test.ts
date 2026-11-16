@@ -182,6 +182,56 @@ function createFakeFirestore() {
     };
   }
 
+  // Mutex-style fake for db.runTransaction: real Firestore transactions are
+  // optimistic-concurrency + retry, but for this fake, serializing every
+  // transaction callback's execution end-to-end (no two callback bodies ever
+  // run with their statements interleaved) gives the same isolation
+  // guarantee that matters here — the check-then-claim inside one
+  // transaction is atomic with respect to any other concurrent transaction
+  // against this same fake db. transactionAttempts counts how many times a
+  // transaction body actually ran, so a test can assert two concurrent
+  // callers each really entered runTransaction (not that one was skipped
+  // entirely by some scheduling fluke).
+  let lock: Promise<void> = Promise.resolve();
+  let transactionAttempts = 0;
+
+  async function runTransaction<T>(
+    updateFunction: (tx: {
+      get: (ref: { path: string }) => Promise<{
+        exists: boolean;
+        id: string;
+        data: () => Record<string, unknown> | undefined;
+      }>;
+      update: (ref: { path: string }, data: Record<string, unknown>) => void;
+    }) => Promise<T>
+  ): Promise<T> {
+    const previous = lock;
+    let release!: () => void;
+    lock = new Promise((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      transactionAttempts += 1;
+      const tx = {
+        async get(ref: { path: string }) {
+          const data = store.get(ref.path);
+          return {
+            exists: data !== undefined,
+            id: ref.path.split('/').pop()!,
+            data: () => (data ? { ...data } : undefined),
+          };
+        },
+        update(ref: { path: string }, data: Record<string, unknown>) {
+          applyUpdate(ref.path, data);
+        },
+      };
+      return await updateFunction(tx);
+    } finally {
+      release();
+    }
+  }
+
   const db = {
     collection(name: string) {
       return makeCollectionRef(name);
@@ -197,9 +247,17 @@ function createFakeFirestore() {
         },
       };
     },
+    runTransaction,
   };
 
-  return { db, store, createAttempts };
+  return {
+    db,
+    store,
+    createAttempts,
+    get transactionAttempts() {
+      return transactionAttempts;
+    },
+  };
 }
 
 function sectionsForBook(store: Map<string, StoredDoc>, bookId: string) {
@@ -527,6 +585,58 @@ describe('finalizeSectioning', () => {
     expect(doc.sectionRefs).toEqual([{ bookId, sectionId: sections[0].id }]);
   });
 
+  // Important #3: the dictionary API (dictionaryapi.dev) is English-only. For
+  // a non-English book, a candidate word that happens to look like an
+  // English word (e.g. Spanish "sale", French "once") can get back a REAL
+  // but WRONG English definition instead of failing gracefully to null.
+  // Combined with the "never overwrite an existing word's definition" rule,
+  // a wrong definition becomes permanent. New words extracted from a
+  // non-English book must skip fetchDefinition entirely and store
+  // definition: null, leaving the null-backfill path (lookup route, or a
+  // future translation pipeline) as the only way to ever fill it in.
+  test('a non-English book stores definition: null for new words and never calls fetchDefinition', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockDetectLanguage.mockReturnValue('spanish');
+
+    const word = uniqueWord(0);
+    const { bookId } = await addBook({
+      title: 'Spanish Book',
+      format: 'text',
+      rawText: word,
+      userId: 'user-1',
+    });
+    await finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 });
+
+    expect(mockFetchDefinition).not.toHaveBeenCalled();
+
+    const doc = wordDoc(store, 'user-1', word, 'spanish') as any;
+    expect(doc).toBeDefined();
+    expect(doc.definition).toBeNull();
+  });
+
+  // Contrast case: an English book still calls the dictionary API normally.
+  test('an English book still calls fetchDefinition for new words', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockDetectLanguage.mockReturnValue('english');
+    mockFetchDefinition.mockResolvedValue('an english definition');
+
+    const word = uniqueWord(0);
+    const { bookId } = await addBook({
+      title: 'English Book',
+      format: 'text',
+      rawText: word,
+      userId: 'user-1',
+    });
+    await finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 });
+
+    expect(mockFetchDefinition).toHaveBeenCalledWith(word);
+
+    const doc = wordDoc(store, 'user-1', word, 'english') as any;
+    expect(doc.definition).toBe('an english definition');
+  });
+
   test('a brand-new word has its sectionRefs entry set at create() time, before the linking batch ever commits', async () => {
     const { db, store } = createFakeFirestore();
 
@@ -835,5 +945,50 @@ describe('finalizeSectioning', () => {
     // No duplicate sections were created.
     const sectionsAfterSecond = sectionsForBook(store, bookId);
     expect(sectionsAfterSecond).toEqual(sectionsAfterFirst);
+  });
+
+  // Important #2 (race fix): the above guard only protects a second call
+  // made strictly AFTER a first call has fully finished — it does nothing
+  // for two genuinely concurrent calls, since both could read
+  // sectioningMethod: null before either finishes writing. The fix claims
+  // sectioningMethod atomically inside a transaction, BEFORE any slow work
+  // (reading the pending blob, extracting words) — so the loser of the race
+  // sees it already set and returns early without ever touching the pending
+  // blob a second time.
+  test('two concurrent finalizeSectioning calls for the SAME book create exactly one set of sections, and only one of them reads the pending blob', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockFetchDefinition.mockResolvedValue('a definition');
+
+    const word = uniqueWord(0);
+    const { bookId } = await addBook({
+      title: 'Racing Finalize Book',
+      format: 'text',
+      rawText: word,
+      userId: 'user-1',
+    });
+
+    const [resultA, resultB] = await Promise.all([
+      finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 }),
+      finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 }),
+    ]);
+
+    // Both calls resolve without throwing.
+    expect(resultA).toBeUndefined();
+    expect(resultB).toBeUndefined();
+
+    // Exactly one set of sections exists — the race did not double them up.
+    const sections = sectionsForBook(store, bookId);
+    expect(sections).toHaveLength(1);
+
+    // The book ends up finalized exactly once, with the expected method.
+    const bookDoc = store.get(`books/${bookId}`) as any;
+    expect(bookDoc.sectioningMethod).toBe('by_page');
+    expect(bookDoc.pagesPerSection).toBe(1);
+
+    // Only the winning call ever read the (slow, one-shot) pending blob —
+    // the loser's transaction saw sectioningMethod already claimed and
+    // returned before reaching readPendingBookText at all.
+    expect(mockReadPendingBookText).toHaveBeenCalledTimes(1);
   });
 });

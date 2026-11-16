@@ -68,8 +68,14 @@ export async function POST(request: NextRequest) {
 
       // pdfjs extracts no title/author metadata here (ParsedPdf carries
       // only text/pageTexts/outline), so — unlike the epub branch — the
-      // title comes from the form field the client always sends.
-      title = String(formData.get('title') ?? '');
+      // title comes from the form field the client always sends. Minor
+      // #6: an empty/missing title field previously saved the book with an
+      // empty title; fall back to the file's own name (extension
+      // stripped), the closest available substitute for the epub branch's
+      // own-metadata fallback (which has no form-field equivalent to be
+      // empty in the first place).
+      const titleField = String(formData.get('title') ?? '').trim();
+      title = titleField.length > 0 ? titleField : file.name.replace(/\.pdf$/i, '');
       author = undefined;
       rawText = parsed.text;
       chapterTitles = parsed.outline ?? undefined;

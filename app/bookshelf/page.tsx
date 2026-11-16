@@ -27,7 +27,13 @@ export default async function BookshelfPage() {
 
   const books: BookshelfBook[] = await Promise.all(
     booksSnapshot.docs.map(async (doc) => {
-      const data = doc.data() as { title: string; author?: string | null; language: string };
+      const data = doc.data() as {
+        title: string;
+        author?: string | null;
+        language: string;
+        source?: string;
+        sectioningMethod?: string | null;
+      };
 
       const sectionsSnapshot = await db.collection('books').doc(doc.id).collection('sections').get();
       const sectionsTotal = sectionsSnapshot.docs.length;
@@ -36,6 +42,12 @@ export default async function BookshelfPage() {
         return UNLOCKED_STATUSES.has(sectionData.status);
       }).length;
 
+      // Minor #5: an uploaded book has zero sections until its
+      // deferred-sectioning setup is finalized (sectioningMethod set from
+      // null to a real method) — show "Not yet started" for it instead of
+      // the misleading "0 of 0 sections unlocked".
+      const needsSetup = data.source === 'uploaded' && data.sectioningMethod == null;
+
       return {
         id: doc.id,
         title: data.title,
@@ -43,6 +55,7 @@ export default async function BookshelfPage() {
         language: data.language,
         sectionsTotal,
         sectionsUnlocked,
+        needsSetup,
       };
     })
   );

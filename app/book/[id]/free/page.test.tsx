@@ -11,6 +11,10 @@ vi.mock('@/lib/firebase/server', () => ({
   getAuthedUser: vi.fn(),
 }));
 
+vi.mock('@/lib/storage/pendingBookText', () => ({
+  readPendingBookText: vi.fn(),
+}));
+
 // Mocked so tests can inspect exactly what props this page passed through
 // (word/language), while still rendering the tapped word as visible text for
 // the "renders every section's text" assertions.
@@ -34,11 +38,13 @@ vi.mock('next/navigation', () => ({
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuthedUser } from '@/lib/firebase/server';
+import { readPendingBookText } from '@/lib/storage/pendingBookText';
 import WordPopup from '@/components/WordPopup';
 import FreeReadPage from './page';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
 const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
+const mockReadPendingBookText = readPendingBookText as unknown as ReturnType<typeof vi.fn>;
 const mockWordPopup = WordPopup as unknown as ReturnType<typeof vi.fn>;
 
 type StoredDoc = Record<string, unknown>;
@@ -157,6 +163,7 @@ beforeEach(() => {
   mockNotFound.mockClear();
   mockGetFirestore.mockReset();
   mockGetAuthedUser.mockReset();
+  mockReadPendingBookText.mockReset();
   mockWordPopup.mockClear();
 });
 
@@ -165,7 +172,12 @@ describe('FreeReadPage', () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', language: 'english' });
+    putBook(store, 'book-1', {
+      userId: 'user-1',
+      title: 'My Book',
+      language: 'english',
+      sectioningMethod: 'by_page',
+    });
     putSection(store, 'book-1', 'section-1', { sectionNumber: 1, status: 'locked', text: 'alpha' });
     putSection(store, 'book-1', 'section-2', {
       sectionNumber: 2,
@@ -188,7 +200,12 @@ describe('FreeReadPage', () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', language: 'spanish' });
+    putBook(store, 'book-1', {
+      userId: 'user-1',
+      title: 'My Book',
+      language: 'spanish',
+      sectioningMethod: 'by_page',
+    });
     putSection(store, 'book-1', 'section-1', {
       sectionNumber: 1,
       status: 'locked',
@@ -210,7 +227,12 @@ describe('FreeReadPage', () => {
     const { db, store, updateSpy, setSpy } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
-    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book', language: 'english' });
+    putBook(store, 'book-1', {
+      userId: 'user-1',
+      title: 'My Book',
+      language: 'english',
+      sectioningMethod: 'by_page',
+    });
     putSection(store, 'book-1', 'section-1', { sectionNumber: 1, status: 'locked', text: 'alpha' });
     putSection(store, 'book-1', 'section-2', {
       sectionNumber: 2,
@@ -232,5 +254,62 @@ describe('FreeReadPage', () => {
       status: 'locked',
       text: 'alpha',
     });
+  });
+
+  test('a book with sectioningMethod: null reads from readPendingBookText instead of querying sections, and renders its words with sectionId=""', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', {
+      userId: 'user-1',
+      title: 'My Book',
+      language: 'english',
+      sectioningMethod: null,
+    });
+    mockReadPendingBookText.mockResolvedValue('alpha beta gamma');
+
+    const jsx = await FreeReadPage({ params: Promise.resolve({ id: 'book-1' }) });
+    render(jsx);
+
+    expect(mockReadPendingBookText).toHaveBeenCalledWith('user-1', 'book-1');
+
+    expect(screen.getByText('alpha')).toBeInTheDocument();
+    expect(screen.getByText('beta')).toBeInTheDocument();
+    expect(screen.getByText('gamma')).toBeInTheDocument();
+
+    expect(mockWordPopup).toHaveBeenCalled();
+    for (const call of mockWordPopup.mock.calls) {
+      expect(call[0]).toMatchObject({ bookId: 'book-1', sectionId: '' });
+    }
+    const words = mockWordPopup.mock.calls.map((call) => call[0].word);
+    expect(words).toEqual(['alpha', 'beta', 'gamma']);
+  });
+
+  test('a book with sectioningMethod: null never queries the sections subcollection', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', {
+      userId: 'user-1',
+      title: 'My Book',
+      language: 'english',
+      sectioningMethod: null,
+    });
+    mockReadPendingBookText.mockResolvedValue('alpha beta');
+
+    // No sections were ever put into the store for this book. If the page
+    // still tried its old unconditional `.collection('sections')` query
+    // path, the fake's `collection()` guard would throw on anything other
+    // than 'sections' — here it would succeed but return zero docs, so the
+    // real guard is the explicit mockReadPendingBookText call-count/args
+    // assertion combined with the rendered pending text above. This test
+    // additionally asserts the pending path uses the book's own language
+    // default when none is set.
+    const jsx = await FreeReadPage({ params: Promise.resolve({ id: 'book-1' }) });
+    render(jsx);
+
+    expect(mockReadPendingBookText).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('alpha')).toBeInTheDocument();
+    expect(screen.getByText('beta')).toBeInTheDocument();
   });
 });

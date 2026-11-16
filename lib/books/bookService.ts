@@ -152,9 +152,18 @@ async function extractAndLinkWords(params: {
       }
     }
 
-    const definitions = await fetchDefinitionsWithLimit(
-      newWordPositions.map((j) => candidateWords[j])
-    );
+    // Important #3: the dictionary API is English-only. For a non-English
+    // word that happens to look like an English word (e.g. Spanish "sale",
+    // French "once"), it can return a REAL but WRONG English definition
+    // instead of failing gracefully to null — and since this app never
+    // overwrites an existing word's definition on re-extraction, a wrong
+    // definition would become permanent, with no path for a future
+    // translation pipeline to ever correct it. Skip the dictionary lookup
+    // entirely for a non-English language and store null directly.
+    const definitions =
+      language === 'english'
+        ? await fetchDefinitionsWithLimit(newWordPositions.map((j) => candidateWords[j]))
+        : newWordPositions.map(() => null);
 
     await Promise.all(
       newWordPositions.map(async (j, k) => {
@@ -246,11 +255,6 @@ export async function finalizeSectioning(params: {
   if (!bookSnap.exists) {
     throw new Error('Failed to load book: no document found');
   }
-  const bookData = bookSnap.data() as {
-    language: string;
-    detectedChapterBreaks: number[] | null;
-    sectioningMethod: string | null;
-  };
 
   // BINDING RULING (plan preflight conflict scan, Review Focus #5): a
   // second, accidental call to finalizeSectioning on a book that has
@@ -260,16 +264,55 @@ export async function finalizeSectioning(params: {
   // if it didn't, re-running extraction would double up sections/words.
   // sectioningMethod is set exactly once, at the end of a successful first
   // finalize, so its presence is the signal this already happened.
-  if (bookData.sectioningMethod != null) {
+  //
+  // Important #2: the plain get()-then-update() version of this guard only
+  // protected a call made strictly AFTER a prior call had fully finished —
+  // two near-simultaneous calls (a double-click, a retried request) could
+  // both read sectioningMethod: null before either finished writing. The
+  // check-and-claim now happens atomically inside one transaction, and the
+  // claim (`tx.update` setting sectioningMethod) is written immediately —
+  // before any slow work below (reading the pending blob, extracting
+  // words) — so a second, truly concurrent call's transaction is guaranteed
+  // to see it already set and return early via the same guard, race-safe.
+  const claim = await db.runTransaction(async (tx) => {
+    const freshSnap = await tx.get(bookRef);
+    if (!freshSnap.exists) {
+      throw new Error('Failed to load book: no document found');
+    }
+    const freshData = freshSnap.data() as {
+      language: string;
+      detectedChapterBreaks: number[] | null;
+      sectioningMethod: string | null;
+    };
+
+    if (freshData.sectioningMethod != null) {
+      return { alreadyDone: true as const };
+    }
+
+    tx.update(bookRef, {
+      sectioningMethod: method,
+      pagesPerSection: method === 'by_page' ? pagesPerSection ?? 1 : null,
+    });
+
+    return {
+      alreadyDone: false as const,
+      language: freshData.language,
+      detectedChapterBreaks: freshData.detectedChapterBreaks,
+    };
+  });
+
+  if (claim.alreadyDone) {
     return;
   }
+
+  const { language, detectedChapterBreaks } = claim;
 
   const rawText = await readPendingBookText(userId, bookId);
 
   const sections =
     method === 'by_page'
       ? splitByPageCount(rawText, pagesPerSection ?? 1)
-      : splitByChapters(rawText, bookData.detectedChapterBreaks ?? []);
+      : splitByChapters(rawText, detectedChapterBreaks ?? []);
 
   const sectionsCollection = bookRef.collection('sections');
   const sectionDocRefs = await Promise.all(
@@ -289,13 +332,8 @@ export async function finalizeSectioning(params: {
     sections,
     bookId,
     userId,
-    language: bookData.language,
+    language,
     sectionDocRefs,
-  });
-
-  await bookRef.update({
-    sectioningMethod: method,
-    pagesPerSection: method === 'by_page' ? pagesPerSection ?? 1 : null,
   });
 
   await deletePendingBookText(userId, bookId);
