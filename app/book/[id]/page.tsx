@@ -19,7 +19,7 @@ type BookData = {
   author?: string | null;
   language?: string;
   source?: 'uploaded' | 'ai_generated';
-  sectioningMethod?: 'by_page' | 'by_chapter' | null;
+  sectioningMethod?: 'by_page' | 'by_chapter' | 'fixed_word_count' | null;
   detectedChapterBreaks?: number[] | null;
 };
 
