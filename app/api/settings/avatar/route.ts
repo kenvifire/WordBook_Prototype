@@ -35,7 +35,17 @@ export async function POST(request: NextRequest) {
 
   await fileRef.save(buffer, { contentType: file.type });
 
-  const avatarUrl = fileRef.publicUrl();
+  // storage.rules governs requests through firebasestorage.googleapis.com
+  // (the Firebase client SDK/REST API) only — it has no effect on the
+  // storage.googleapis.com host that `.publicUrl()` would return, and GCS
+  // buckets have no public IAM binding by default, so that URL 403s for
+  // everyone, including the owner. A signed URL is the only thing that
+  // actually works here. The far-future expiry approximates "doesn't
+  // expire" for a prototype with no refresh flow.
+  const [avatarUrl] = await fileRef.getSignedUrl({
+    action: 'read',
+    expires: '03-01-2099',
+  });
   await updateUserProfile(user.uid, { avatarUrl });
 
   return NextResponse.json({ avatarUrl }, { status: 200 });

@@ -27,8 +27,8 @@ const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
 const mockGetStorage = getStorage as unknown as ReturnType<typeof vi.fn>;
 const mockUpdateUserProfile = updateUserProfile as unknown as ReturnType<typeof vi.fn>;
 
-function makeStorageMock(save: ReturnType<typeof vi.fn>, publicUrl: ReturnType<typeof vi.fn>) {
-  const file = vi.fn((_path: string) => ({ save, publicUrl }));
+function makeStorageMock(save: ReturnType<typeof vi.fn>, getSignedUrl: ReturnType<typeof vi.fn>) {
+  const file = vi.fn((_path: string) => ({ save, getSignedUrl }));
   const bucket = vi.fn(() => ({ file }));
   return { bucket, file };
 }
@@ -50,8 +50,9 @@ describe('POST /api/settings/avatar', () => {
   test('uploads the file and stores its URL on the profile', async () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     const save = vi.fn().mockResolvedValue(undefined);
-    const publicUrl = vi.fn(() => 'https://storage.googleapis.com/fake-bucket/avatars/user-1/fake-uuid');
-    const storage = makeStorageMock(save, publicUrl);
+    const signedUrl = 'https://storage.googleapis.com/fake-bucket/avatars/user-1/fake-uuid?signed=1';
+    const getSignedUrl = vi.fn().mockResolvedValue([signedUrl]);
+    const storage = makeStorageMock(save, getSignedUrl);
     mockGetStorage.mockReturnValue(storage);
     mockUpdateUserProfile.mockResolvedValue(undefined);
 
@@ -73,11 +74,17 @@ describe('POST /api/settings/avatar', () => {
     expect(Buffer.isBuffer(bufferArg)).toBe(true);
     expect(save).toHaveBeenCalledWith(bufferArg, { contentType: 'image/png' });
 
+    // The URL must come from an awaited getSignedUrl() call (which returns
+    // a [url] tuple in the Admin SDK), not a bare publicUrl() — a plain
+    // storage.googleapis.com public URL 403s because GCS buckets have no
+    // public IAM binding by default and storage.rules doesn't govern that
+    // host at all.
+    expect(getSignedUrl).toHaveBeenCalledWith({ action: 'read', expires: '03-01-2099' });
     expect(mockUpdateUserProfile).toHaveBeenCalledWith('user-1', {
-      avatarUrl: 'https://storage.googleapis.com/fake-bucket/avatars/user-1/fake-uuid',
+      avatarUrl: signedUrl,
     });
     expect(body).toEqual({
-      avatarUrl: 'https://storage.googleapis.com/fake-bucket/avatars/user-1/fake-uuid',
+      avatarUrl: signedUrl,
     });
   });
 
