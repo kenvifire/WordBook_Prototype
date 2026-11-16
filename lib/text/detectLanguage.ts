@@ -10,12 +10,7 @@ const LANGUAGE_NAMES: Record<string, string> = {
   rus: 'russian',
 };
 
-// Restricting franc to the in-scope languages is required: unrestricted,
-// franc classifies short English/Spanish sentences as Scots ('sco') and
-// Romansh ('rmn') respectively.
-const CANDIDATES = Object.keys(LANGUAGE_NAMES);
-
 export function detectLanguage(text: string): string {
-  const code = franc(text, { only: CANDIDATES });
+  const code = franc(text);
   return LANGUAGE_NAMES[code] ?? 'unknown';
 }
