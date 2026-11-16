@@ -70,6 +70,29 @@ describe('AddBookForm', () => {
     expect(body1.get('rawText')).toBeNull();
   });
 
+  test('choosing a .pdf file switches the form to upload mode and posts format=pdf with a file field', async () => {
+    mockFetchOnce({ ok: true, json: async () => ({ bookId: 'book-4' }) });
+
+    const user = userEvent.setup();
+    render(<AddBookForm />);
+
+    await user.click(screen.getByRole('button', { name: /upload file/i }));
+    await user.type(screen.getByLabelText(/title/i), 'Pdf Book');
+
+    const pdfFile = new File(['pdf contents'], 'book.pdf', {
+      type: 'application/pdf',
+    });
+    const fileInput = screen.getByLabelText(/^file$/i);
+    await user.upload(fileInput, pdfFile);
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    const body = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as FormData;
+    expect(body.get('format')).toBe('pdf');
+    expect(body.get('file')).toBeInstanceOf(File);
+    expect(body.get('rawText')).toBeNull();
+  });
+
   test('choosing a .txt file reads its contents client-side and posts format=text with rawText (no file field)', async () => {
     mockFetchOnce({ ok: true, json: async () => ({ bookId: 'book-3' }) });
 

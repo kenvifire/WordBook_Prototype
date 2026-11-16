@@ -9,6 +9,10 @@ function isEpubFile(file: File): boolean {
   return file.name.toLowerCase().endsWith('.epub');
 }
 
+function isPdfFile(file: File): boolean {
+  return file.name.toLowerCase().endsWith('.pdf');
+}
+
 function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -37,8 +41,8 @@ export default function AddBookForm() {
     setSubmitting(true);
     try {
       if (mode === 'file' && file) {
-        if (isEpubFile(file)) {
-          formData.append('format', 'epub');
+        if (isEpubFile(file) || isPdfFile(file)) {
+          formData.append('format', isEpubFile(file) ? 'epub' : 'pdf');
           formData.append('file', file);
         } else {
           formData.append('format', 'text');
@@ -127,7 +131,7 @@ export default function AddBookForm() {
           <span className="text-sm font-medium">File</span>
           <input
             type="file"
-            accept=".txt,.epub"
+            accept=".txt,.epub,.pdf"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             className="rounded border px-3 py-2"
           />

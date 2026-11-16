@@ -79,4 +79,47 @@ describe('parseEpub', () => {
     vi.doUnmock('epub2');
     vi.resetModules();
   });
+
+  test('parseEpub also returns chapter titles from the TOC', async () => {
+    vi.resetModules();
+    vi.doMock('epub2', () => ({
+      EPub: {
+        createAsync: vi.fn().mockResolvedValue({
+          metadata: { title: 'TOC Test', creator: 'Author' },
+          flow: [{ id: 'ch1' }],
+          toc: [{ title: 'Chapter One' }, { title: 'Chapter Two' }],
+          getChapterAsync: vi.fn().mockResolvedValue('<p>some chapter text</p>'),
+        }),
+      },
+    }));
+
+    const { parseEpub: parseEpubWithMock } = await import('./parseEpub');
+    const result = await parseEpubWithMock(Buffer.from('irrelevant'));
+
+    expect(result.chapterTitles).toEqual(['Chapter One', 'Chapter Two']);
+
+    vi.doUnmock('epub2');
+    vi.resetModules();
+  });
+
+  test('parseEpub returns null chapter titles when the EPUB has no TOC', async () => {
+    vi.resetModules();
+    vi.doMock('epub2', () => ({
+      EPub: {
+        createAsync: vi.fn().mockResolvedValue({
+          metadata: { title: 'No TOC Test', creator: 'Author' },
+          flow: [{ id: 'ch1' }],
+          getChapterAsync: vi.fn().mockResolvedValue('<p>some chapter text</p>'),
+        }),
+      },
+    }));
+
+    const { parseEpub: parseEpubWithMock } = await import('./parseEpub');
+    const result = await parseEpubWithMock(Buffer.from('irrelevant'));
+
+    expect(result.chapterTitles).toBeNull();
+
+    vi.doUnmock('epub2');
+    vi.resetModules();
+  });
 });
