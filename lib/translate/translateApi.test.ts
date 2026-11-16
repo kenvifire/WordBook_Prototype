@@ -32,6 +32,18 @@ describe('translateWord', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  test('short-circuits to null when sourceLanguage is not in the lookup table (e.g. "unknown")', async () => {
+    global.fetch = vi.fn();
+    await expect(translateWord('chat', 'unknown', 'english')).resolves.toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test('short-circuits to null when targetLanguage is not in the lookup table (free-text nativeLanguage)', async () => {
+    global.fetch = vi.fn();
+    await expect(translateWord('cat', 'english', 'Tagalog')).resolves.toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   test('returns null on a network failure or timeout, never throws', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('network down'));
     await expect(translateWord('chat', 'french', 'english')).resolves.toBeNull();
