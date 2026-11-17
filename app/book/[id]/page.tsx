@@ -21,7 +21,20 @@ type BookData = {
   source?: 'uploaded' | 'ai_generated';
   sectioningMethod?: 'by_page' | 'by_chapter' | 'fixed_word_count' | null;
   detectedChapterBreaks?: number[] | null;
+  generationStatus?: 'pending' | 'ready' | 'failed';
+  createdAt?: FirebaseFirestore.Timestamp;
 };
+
+// Fix 5: a stuck 'pending' generation (e.g. a server restart mid-generation)
+// should eventually read as failed rather than pending forever, per this
+// plan's Review Focus #1 — mirrors the same 5-minute threshold used by
+// app/bookshelf/page.tsx's display-only staleness override.
+const STALE_PENDING_MS = 5 * 60 * 1000;
+
+function isPendingStale(createdAt: FirebaseFirestore.Timestamp | undefined): boolean {
+  if (!createdAt) return false;
+  return Date.now() - createdAt.toDate().getTime() > STALE_PENDING_MS;
+}
 
 export default async function BookDetailPage({
   params,
@@ -68,6 +81,25 @@ export default async function BookDetailPage({
           bookId={id}
           hasChapterBreaks={bookData.detectedChapterBreaks != null}
         />
+      </main>
+    );
+  }
+
+  // Fix 5: a pending or failed generated book has no sections to show and
+  // must not fall through to the normal Free/Section toggle + section list
+  // below, which would otherwise render "This book has no sections yet"
+  // with no indication of WHY or whether it'll ever have any. A stale
+  // 'pending' status (createdAt more than 5 minutes old) is treated as
+  // failed for this check, same reasoning as the Bookshelf's own override.
+  if (bookData.source === 'ai_generated' && bookData.generationStatus !== 'ready') {
+    const stale = bookData.generationStatus === 'pending' && isPendingStale(bookData.createdAt);
+    const isFailed = bookData.generationStatus === 'failed' || stale;
+    return (
+      <main className="mx-auto flex min-h-screen max-w-2xl flex-col px-4 py-8">
+        <h1 className="mb-1 text-2xl font-semibold">{bookData.title}</h1>
+        <p className="text-sm text-gray-600">
+          {isFailed ? 'Generation failed.' : 'Generating…'}
+        </p>
       </main>
     );
   }

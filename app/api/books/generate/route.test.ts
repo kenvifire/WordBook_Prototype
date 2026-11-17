@@ -91,4 +91,35 @@ describe('POST /api/books/generate', () => {
       userId: 'user-1',
     });
   });
+
+  test('Fix 3: normalizes a mixed-case language ("Spanish") to lowercase before passing it to startGeneratingBook', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    mockStartGeneratingBook.mockResolvedValue({ bookId: 'book-123' });
+
+    const body = validBody({ language: 'Spanish' });
+    const response = await POST(makeRequest(body));
+
+    expect(response.status).toBe(201);
+    expect(mockStartGeneratingBook).toHaveBeenCalledWith(
+      expect.objectContaining({ language: 'spanish' })
+    );
+  });
+
+  test('Fix 3: rejects a language containing a space ("Brazilian Portuguese")', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const response = await POST(makeRequest(validBody({ language: 'Brazilian Portuguese' })));
+
+    expect(response.status).toBe(400);
+    expect(mockStartGeneratingBook).not.toHaveBeenCalled();
+  });
+
+  test('Fix 3: rejects a language containing a slash ("es/panish"), guarding buildWordId path-injection', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const response = await POST(makeRequest(validBody({ language: 'es/panish' })));
+
+    expect(response.status).toBe(400);
+    expect(mockStartGeneratingBook).not.toHaveBeenCalled();
+  });
 });

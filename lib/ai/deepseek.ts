@@ -123,5 +123,13 @@ export async function generateStory(input: GenerateStoryInput): Promise<Generate
     throw new Error('DeepSeek response is missing required fields (title/text/vocabulary)');
   }
 
+  // Fix 7: an empty (or whitespace-only) story would otherwise sail through
+  // as a "successful" generation with zero actual content, then get
+  // sectioned into zero sections and marked generationStatus: 'ready' —
+  // treat it the same as a missing field.
+  if (text.trim().length === 0) {
+    throw new Error('DeepSeek response is missing required fields (title/text/vocabulary)');
+  }
+
   return { title, text, vocabulary };
 }

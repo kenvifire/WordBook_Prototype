@@ -10,10 +10,6 @@ vi.mock('firebase-admin/firestore', () => ({
 
 vi.mock('@/lib/firebase/admin', () => ({ getAdminApp: vi.fn(() => ({})) }));
 
-vi.mock('@/lib/dictionary/dictionaryApi', () => ({
-  fetchDefinition: vi.fn(),
-}));
-
 vi.mock('@/lib/translate/translateApi', () => ({
   translateWord: vi.fn(),
 }));
@@ -58,7 +54,6 @@ vi.mock('@/lib/storage/pendingBookText', () => {
 });
 
 import { getFirestore } from 'firebase-admin/firestore';
-import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
 import { translateWord } from '@/lib/translate/translateApi';
 import { getUserProfile } from '@/lib/users/userProfile';
 import { detectLanguage } from '@/lib/text/detectLanguage';
@@ -72,7 +67,6 @@ import { buildWordId } from '@/lib/firebase/wordId';
 import { addBook, finalizeSectioning } from './bookService';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
-const mockFetchDefinition = fetchDefinition as unknown as ReturnType<typeof vi.fn>;
 const mockTranslateWord = translateWord as unknown as ReturnType<typeof vi.fn>;
 const mockGetUserProfile = getUserProfile as unknown as ReturnType<typeof vi.fn>;
 const mockDetectLanguage = detectLanguage as unknown as ReturnType<typeof vi.fn>;
@@ -290,8 +284,6 @@ function wordDoc(
 }
 
 beforeEach(() => {
-  mockFetchDefinition.mockReset();
-  mockFetchDefinition.mockResolvedValue('a definition');
   mockTranslateWord.mockReset();
   mockTranslateWord.mockResolvedValue(null);
   mockGetUserProfile.mockReset();
@@ -388,7 +380,6 @@ describe('addBook', () => {
   test('addBook stores language on the book doc; finalizeSectioning stores it on extracted words', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('a definition');
 
     const word = uniqueWord(0);
     const { bookId } = await addBook({
@@ -413,7 +404,6 @@ describe('addBook', () => {
   test('addBook keeps the same spelling separate across two languages for the same user', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('a definition');
 
     // The brief's literal example word ("chat") is itself in
     // lib/text/commonWords.json, so extractVocabulary strips it out
@@ -509,7 +499,6 @@ describe('finalizeSectioning', () => {
   test('with method by_chapter uses the stored detectedChapterBreaks', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('a definition');
 
     const word0 = uniqueWord(0);
     const word1 = uniqueWord(1);
@@ -643,7 +632,6 @@ describe('finalizeSectioning', () => {
     });
     await finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 });
 
-    expect(mockFetchDefinition).not.toHaveBeenCalled();
     expect(mockTranslateWord).toHaveBeenCalledWith(word, 'spanish', 'english');
 
     const doc = wordDoc(store, 'user-1', word, 'spanish') as any;
@@ -653,7 +641,7 @@ describe('finalizeSectioning', () => {
 
   // Contrast case: an English book is translated exactly the same way as any
   // other language — no special-casing by language anymore.
-  test('an English book also gets its new words translated via translateWord, not fetchDefinition', async () => {
+  test('an English book also gets its new words translated via translateWord', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
     mockDetectLanguage.mockReturnValue('english');
@@ -674,14 +662,13 @@ describe('finalizeSectioning', () => {
     });
     await finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 });
 
-    expect(mockFetchDefinition).not.toHaveBeenCalled();
     expect(mockTranslateWord).toHaveBeenCalledWith(word, 'english', 'spanish');
 
     const doc = wordDoc(store, 'user-1', word, 'english') as any;
     expect(doc.definition).toBe('a translated definition');
   });
 
-  test("a new word's definition comes from translateWord, not fetchDefinition, when nativeLanguage is set", async () => {
+  test("a new word's definition comes from translateWord when nativeLanguage is set", async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
     mockDetectLanguage.mockReturnValue('english');
@@ -705,7 +692,6 @@ describe('finalizeSectioning', () => {
     const doc = wordDoc(store, 'user-1', word) as any;
     expect(doc.definition).toBe('la palabra traducida');
     expect(mockTranslateWord).toHaveBeenCalledWith(word, 'english', 'spanish');
-    expect(mockFetchDefinition).not.toHaveBeenCalled();
   });
 
   test('a new word gets definition: null when the user has no nativeLanguage set', async () => {
@@ -760,7 +746,6 @@ describe('finalizeSectioning', () => {
     };
 
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('a definition');
 
     const word = uniqueWord(0);
     const { bookId } = await addBook({
@@ -876,7 +861,6 @@ describe('finalizeSectioning', () => {
   test('Important #2 regression: re-extracting a reader-added word grows its sectionRefs but never touches addedFromReader', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('a definition');
 
     // Simulates a word originally created via the reader's "Add to my
     // vocabulary" button (app/api/words/lookup/route.ts): addedFromReader
@@ -917,7 +901,6 @@ describe('finalizeSectioning', () => {
   test('two concurrent finalizeSectioning calls creating the same new word result in exactly one document, and the losing call still gets a usable word id', async () => {
     const { db, store, createAttempts } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('a definition');
 
     const sharedWord = uniqueWord(0);
     const wordId = buildWordId('user-1', 'english', sharedWord);
@@ -979,7 +962,6 @@ describe('finalizeSectioning', () => {
   test("each word doc's sectionRefs and each section doc's wordIds are updated together for every word/section pair", async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('a definition');
 
     const word0 = uniqueWord(0);
     const word1 = uniqueWord(1);
@@ -1022,7 +1004,6 @@ describe('finalizeSectioning', () => {
   test('a second finalizeSectioning call on an already-finalized book does not throw, re-read the pending blob, or duplicate sections', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('a definition');
 
     const word = uniqueWord(0);
     const { bookId } = await addBook({
@@ -1065,7 +1046,6 @@ describe('finalizeSectioning', () => {
   test('two concurrent finalizeSectioning calls for the SAME book create exactly one set of sections, and only one of them reads the pending blob', async () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('a definition');
 
     const word = uniqueWord(0);
     const { bookId } = await addBook({

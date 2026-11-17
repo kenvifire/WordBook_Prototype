@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 vi.mock('firebase-admin/firestore', () => ({
@@ -88,6 +88,12 @@ beforeEach(() => {
   mockNotFound.mockClear();
   mockGetFirestore.mockReset();
   mockGetAuthedUser.mockReset();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('BookDetailPage', () => {
@@ -215,6 +221,12 @@ describe('BookDetailPage', () => {
         sectioningMethod: null,
         detectedChapterBreaks: null,
         language: 'en',
+        // Fix 5: a real generated book always has a generationStatus field
+        // set — 'ready' here since the generationStatus-gating fix now
+        // short-circuits an ai_generated book that ISN'T 'ready' before it
+        // ever reaches the normal toggle/section-list rendering this test
+        // checks.
+        generationStatus: 'ready',
       },
       [{ sectionNumber: 1, status: 'ready_to_practice' }]
     );
@@ -227,5 +239,113 @@ describe('BookDetailPage', () => {
     expect(screen.queryByRole('heading', { name: /set up/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^free reading$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^section reading$/i })).toBeInTheDocument();
+  });
+
+  // Fix 5: a pending or failed generated book has no sections to show and
+  // must not fall through to the normal Free/Section toggle + "This book
+  // has no sections yet" rendering, which gives the user no indication of
+  // why or whether it'll ever have sections.
+  test('Fix 5: a generated book with generationStatus: "pending" (recent createdAt) shows a Generating message, not the normal toggle/section list', async () => {
+    const recentCreatedAt = { toDate: () => new Date('2026-01-01T00:00:00.000Z') };
+    const db = createFakeFirestore(
+      {
+        userId: 'user-1',
+        title: 'A Mystery On A Train',
+        source: 'ai_generated',
+        sectioningMethod: null,
+        detectedChapterBreaks: null,
+        language: 'en',
+        generationStatus: 'pending',
+        createdAt: recentCreatedAt,
+      },
+      []
+    );
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    vi.setSystemTime(new Date('2026-01-01T00:01:00.000Z')); // 1 minute later
+
+    const jsx = await BookDetailPage({ params: Promise.resolve({ id: 'book-1' }) });
+    render(jsx);
+
+    expect(screen.getByText('A Mystery On A Train')).toBeInTheDocument();
+    expect(screen.getByText(/generating/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^free reading$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^section reading$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /set up/i })).not.toBeInTheDocument();
+  });
+
+  test('Fix 5: a generated book with generationStatus: "failed" shows a Generation failed message', async () => {
+    const db = createFakeFirestore(
+      {
+        userId: 'user-1',
+        title: 'A Mystery On A Train',
+        source: 'ai_generated',
+        sectioningMethod: null,
+        detectedChapterBreaks: null,
+        language: 'en',
+        generationStatus: 'failed',
+        createdAt: { toDate: () => new Date('2026-01-01T00:00:00.000Z') },
+      },
+      []
+    );
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const jsx = await BookDetailPage({ params: Promise.resolve({ id: 'book-1' }) });
+    render(jsx);
+
+    expect(screen.getByText('A Mystery On A Train')).toBeInTheDocument();
+    expect(screen.getByText(/generation failed/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^free reading$/i })).not.toBeInTheDocument();
+  });
+
+  test('Fix 5: a generated book stuck in "pending" with a createdAt more than 5 minutes old reads as failed (stale-pending)', async () => {
+    const staleCreatedAt = { toDate: () => new Date('2026-01-01T00:00:00.000Z') };
+    const db = createFakeFirestore(
+      {
+        userId: 'user-1',
+        title: 'A Mystery On A Train',
+        source: 'ai_generated',
+        sectioningMethod: null,
+        detectedChapterBreaks: null,
+        language: 'en',
+        generationStatus: 'pending',
+        createdAt: staleCreatedAt,
+      },
+      []
+    );
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    vi.setSystemTime(new Date('2026-01-01T00:06:00.000Z')); // 6 minutes later
+
+    const jsx = await BookDetailPage({ params: Promise.resolve({ id: 'book-1' }) });
+    render(jsx);
+
+    expect(screen.getByText('A Mystery On A Train')).toBeInTheDocument();
+    expect(screen.getByText(/generation failed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^generating/i)).not.toBeInTheDocument();
+  });
+
+  test('Fix 5: an uploaded book with no generationStatus field at all still renders the normal toggle/section list unaffected', async () => {
+    const db = createFakeFirestore(
+      {
+        userId: 'user-1',
+        title: 'My Book',
+        source: 'uploaded',
+        sectioningMethod: 'by_page',
+        detectedChapterBreaks: null,
+        language: 'en',
+      },
+      [{ sectionNumber: 1, status: 'ready_to_practice' }]
+    );
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const jsx = await BookDetailPage({ params: Promise.resolve({ id: 'book-1' }) });
+    render(jsx);
+
+    expect(screen.getByRole('button', { name: /^free reading$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^section reading$/i })).toBeInTheDocument();
+    expect(screen.getByText('Section 1')).toBeInTheDocument();
   });
 });

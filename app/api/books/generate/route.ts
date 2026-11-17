@@ -53,7 +53,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid difficulty' }, { status: 400 });
   }
 
-  if (typeof body.language !== 'string' || body.language.trim().length === 0) {
+  // Fix 3: normalize before validating, same pattern/rationale as
+  // app/api/words/lookup/route.ts's own language check — lowercase ASCII
+  // letters only. The reader's lookup route hard-requires this shape, so an
+  // unnormalized value like "Spanish" would make every later reader lookup
+  // for this book 400 forever (the lowercase-keyed translation table would
+  // also simply miss). It also blocks a value containing '/' (or any other
+  // character) from being interpolated unchecked into buildWordId's
+  // Firestore document id, which would otherwise write to a different path
+  // since this write goes through the server-side Admin SDK.
+  if (typeof body.language !== 'string') {
+    return NextResponse.json({ error: 'Invalid language' }, { status: 400 });
+  }
+  const language = body.language.trim().toLowerCase();
+  if (!/^[a-z]+$/.test(language)) {
     return NextResponse.json({ error: 'Invalid language' }, { status: 400 });
   }
 
@@ -70,7 +83,7 @@ export async function POST(request: NextRequest) {
   const { bookId } = await startGeneratingBook({
     topic: body.topic,
     difficulty: body.difficulty,
-    language: body.language,
+    language,
     targetWordCount,
     userId: user.uid,
   });

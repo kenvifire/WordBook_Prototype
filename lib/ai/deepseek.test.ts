@@ -87,6 +87,15 @@ describe('generateStory', () => {
     ).rejects.toThrow();
   });
 
+  test('Fix 7: throws a clear error when text is empty (or whitespace-only), same as a missing field', async () => {
+    const emptyText = { title: 'Empty Story', text: '   ', vocabulary: ['word'] };
+    global.fetch = vi.fn().mockResolvedValue(mockChatCompletion(JSON.stringify(emptyText)));
+
+    await expect(
+      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10 })
+    ).rejects.toThrow();
+  });
+
   test('throws a clear error when the response content is not valid JSON', async () => {
     global.fetch = vi.fn().mockResolvedValue(mockChatCompletion('not json at all'));
 

@@ -463,4 +463,88 @@ describe('startGeneratingBook', () => {
 
     expect(wordDocsForUser(store, 'user-1')).toHaveLength(1);
   });
+
+  // Fix 4: generated books previously used raw model strings directly,
+  // bypassing this app's shared normalizeWord/normalizeToken machinery
+  // (lib/text/normalizeWord.ts) that extractVocabulary.ts and the reader's
+  // lookup route already use. Case-only duplicates ("Run" vs "run") must
+  // collapse into a single word doc, same as any other normalization-based
+  // dedupe elsewhere in this app.
+  test('Fix 4: case-only duplicates in the vocabulary list ("Run" vs "run") collapse into exactly one word doc', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGenerateStory.mockResolvedValue({
+      title: 'Casing',
+      text: longStoryText(10),
+      vocabulary: ['Run', 'run'],
+    });
+
+    const { bookId } = await startGeneratingBook(makeInput());
+
+    await vi.waitFor(() => {
+      const bookDoc = store.get(`books/${bookId}`) as any;
+      expect(bookDoc?.generationStatus).toBe('ready');
+    });
+
+    const wordDocs = wordDocsForUser(store, 'user-1');
+    expect(wordDocs).toHaveLength(1);
+    const runId = buildWordId('user-1', 'english', 'run');
+    expect(store.get(`words/${runId}`)).toBeDefined();
+  });
+
+  // Fix 4: a vocabulary entry containing a '/' (e.g. "and/or") would
+  // otherwise reach buildWordId's Firestore document id raw, corrupting the
+  // path and potentially crashing the whole generation. normalizeWord
+  // reduces it to its first clean word-like substring before it's ever
+  // used to build an id, so generation still completes successfully.
+  test('Fix 4: a vocabulary entry containing a slash ("and/or") does not crash generation', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGenerateStory.mockResolvedValue({
+      title: 'Slashed',
+      text: longStoryText(10),
+      vocabulary: ['and/or'],
+    });
+
+    const { bookId } = await startGeneratingBook(makeInput());
+
+    await vi.waitFor(() => {
+      const bookDoc = store.get(`books/${bookId}`) as any;
+      expect(bookDoc?.generationStatus).toBe('ready');
+    });
+
+    const bookDoc = store.get(`books/${bookId}`) as any;
+    expect(bookDoc.generationStatus).toBe('ready');
+  });
+
+  // Fix 4: the presence-check tokenizer swap (tokenizeSectionText now mirrors
+  // extractVocabulary.ts's own normalizeToken-based tokenization) means a
+  // vocabulary word like "dragon" still matches a section that only
+  // literally contains its possessive form "dragon's" — normalizeToken
+  // strips the clitic on both sides of the comparison.
+  test("Fix 4: a vocabulary word ('dragon') whose section text only contains its possessive form (\"dragon's\") is still linked to that section", async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    const storyText = `The dragon's lair was dark and filled with ${longStoryText(10)}`;
+    mockGenerateStory.mockResolvedValue({
+      title: 'Dragon Tale',
+      text: storyText,
+      vocabulary: ['dragon'],
+    });
+
+    const { bookId } = await startGeneratingBook(makeInput());
+
+    await vi.waitFor(() => {
+      const bookDoc = store.get(`books/${bookId}`) as any;
+      expect(bookDoc?.generationStatus).toBe('ready');
+    });
+
+    const dragonId = buildWordId('user-1', 'english', 'dragon');
+    const dragonDoc = store.get(`words/${dragonId}`) as any;
+    expect(dragonDoc).toBeDefined();
+    expect(dragonDoc.sectionRefs.length).toBeGreaterThan(0);
+
+    const sections = sectionsForBook(store, bookId);
+    expect((sections[0] as any).wordIds).toContain(dragonId);
+  });
 });

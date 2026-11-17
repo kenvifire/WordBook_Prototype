@@ -6,6 +6,7 @@ import { generateStory } from '@/lib/ai/deepseek';
 import { translateWord } from '@/lib/translate/translateApi';
 import { getUserProfile } from '@/lib/users/userProfile';
 import { buildWordId } from '@/lib/firebase/wordId';
+import { normalizeQuotes, normalizeToken, normalizeWord, TOKEN_PATTERN_SOURCE } from '@/lib/text/normalizeWord';
 
 export type GenerateBookInput = {
   topic: string;
@@ -21,28 +22,21 @@ function todayDateString(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-// A deliberately simple, non-extraction tokenizer: whitespace-split, then a
-// light strip of leading/trailing non-letter/non-digit characters (so a
-// word immediately followed by natural-prose punctuation like a comma or
-// period still matches) and lowercasing. No stopword filtering,
-// clitic-stripping, or any of extractVocabulary's other language-aware
-// machinery — this only needs a literal, case-insensitive presence check
-// of the model's own vocabulary words against a section's own text, not a
-// real vocabulary extraction.
-const EDGE_PUNCTUATION = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu;
-
-function normalizeForPresenceCheck(token: string): string {
-  return token.replace(EDGE_PUNCTUATION, '').toLowerCase();
-}
-
+// Fix 4: mirrors extractVocabulary.ts's own tokenization exactly, so the
+// presence-check is consistent with how normalizeWord will have already
+// normalized each vocabulary word below — a word like "dragon" correctly
+// matches a "dragon's" occurrence in the text, since normalizeToken strips
+// the possessive clitic on both sides of the comparison. Previously this
+// used a deliberately simpler whitespace-split + light edge-punctuation
+// strip, which missed exactly this case.
 function tokenizeSectionText(text: string): Set<string> {
-  return new Set(
-    text
-      .trim()
-      .split(/\s+/)
-      .map(normalizeForPresenceCheck)
-      .filter((token) => token.length > 0)
-  );
+  const tokens = normalizeQuotes(text).match(new RegExp(TOKEN_PATTERN_SOURCE, 'gu')) ?? [];
+  const result = new Set<string>();
+  for (const raw of tokens) {
+    const word = normalizeToken(raw);
+    if (word) result.add(word);
+  }
+  return result;
 }
 
 // Same field shape as bookService.ts's `newWordDoc` (SM-2 defaults,
@@ -142,12 +136,23 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
     const { nativeLanguage } = await getUserProfile(input.userId);
     const wordsCollection = db.collection('words');
 
-    // Dedupe the model's own vocabulary list before touching Firestore.
-    // buildWordId is deterministic, so the same word listed twice would
+    // Fix 4: run every generated vocabulary word through this app's shared
+    // normalizeWord (lib/text/normalizeWord.ts) — the same normalization
+    // extractVocabulary.ts and the reader's lookup route already use —
+    // BEFORE deduping/building ids. Without this, case-only variants
+    // ("Run" vs "run") or curly-quote/decomposed-accent variants would
+    // create a second word doc the reader's own normalizeWord-based lookup
+    // could never resolve to, and a raw value like "and/or" would reach
+    // buildWordId with a '/' in it, corrupting its Firestore document path.
+    // normalizeWord returns '' for a token with no letters at all; those
+    // are filtered out. Dedupe happens after normalization, since
+    // buildWordId is deterministic and the same normalized word listed
+    // twice (or two raw spellings normalizing to the same word) would
     // otherwise translate and attempt-create it twice for no reason (the
     // second .create() always loses the race below, harmlessly, but
     // there's no reason to do the extra translateWord call).
-    const uniqueWords = Array.from(new Set(result.vocabulary));
+    const normalizedVocabulary = result.vocabulary.map(normalizeWord).filter((w) => w.length > 0);
+    const uniqueWords = Array.from(new Set(normalizedVocabulary));
 
     // sectionWordIds[i] collects every word id actually found present in
     // sections[i]'s text, for the batch update below.
@@ -160,10 +165,12 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
           () => null
         );
 
-        const normalizedWord = normalizeForPresenceCheck(word);
+        // `word` is already normalized (via normalizeWord, above), so it's
+        // directly comparable against tokenizeSectionText's normalizeToken-
+        // based Set without re-normalizing.
         const sectionRefs: { bookId: string; sectionId: string }[] = [];
         sectionWordSets.forEach((tokens, i) => {
-          if (tokens.has(normalizedWord)) {
+          if (tokens.has(word)) {
             sectionWordIds[i].push(wordId);
             sectionRefs.push({ bookId, sectionId: sectionDocRefs[i].id });
           }

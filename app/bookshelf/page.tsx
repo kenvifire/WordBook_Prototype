@@ -13,6 +13,20 @@ import BookshelfPendingPoller from '@/components/BookshelfPendingPoller';
 // `ready_to_practice` are still gated, so they don't count.
 const UNLOCKED_STATUSES = new Set(['ready_to_read', 'completed']);
 
+// Fix 6: mirrors app/book/[id]/page.tsx's own stale-pending override — a
+// generated book stuck in 'pending' (e.g. a server restart mid-generation)
+// should eventually read as failed rather than pending forever. This is
+// display-only: it changes only the value returned in this page's mapped
+// BookshelfBook array, never written back to Firestore. It also naturally
+// stops BookshelfPendingPoller from polling forever for a permanently-stuck
+// book, since hasPendingGeneration is computed from this same mapped array.
+const STALE_PENDING_MS = 5 * 60 * 1000;
+
+function isPendingStale(createdAt: FirebaseFirestore.Timestamp | undefined): boolean {
+  if (!createdAt) return false;
+  return Date.now() - createdAt.toDate().getTime() > STALE_PENDING_MS;
+}
+
 export default async function BookshelfPage() {
   const user = await getAuthedUser();
 
@@ -36,6 +50,7 @@ export default async function BookshelfPage() {
         source?: string;
         sectioningMethod?: string | null;
         generationStatus?: 'pending' | 'ready' | 'failed';
+        createdAt?: FirebaseFirestore.Timestamp;
       };
 
       const sectionsSnapshot = await db.collection('books').doc(doc.id).collection('sections').get();
@@ -51,6 +66,14 @@ export default async function BookshelfPage() {
       // the misleading "0 of 0 sections unlocked".
       const needsSetup = data.source === 'uploaded' && data.sectioningMethod == null;
 
+      // Fix 6: display-only override — a 'pending' book whose createdAt is
+      // more than 5 minutes old is shown as 'failed', without touching
+      // Firestore.
+      const generationStatus =
+        data.generationStatus === 'pending' && isPendingStale(data.createdAt)
+          ? 'failed'
+          : data.generationStatus;
+
       return {
         id: doc.id,
         title: data.title,
@@ -59,7 +82,7 @@ export default async function BookshelfPage() {
         sectionsTotal,
         sectionsUnlocked,
         needsSetup,
-        generationStatus: data.generationStatus,
+        generationStatus,
       };
     })
   );

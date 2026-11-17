@@ -217,6 +217,62 @@ describe('BookshelfPage', () => {
     expect(screen.queryByRole('link', { name: /a mystery on a train/i })).not.toBeInTheDocument();
   });
 
+  // Fix 6: mirrors app/book/[id]/page.tsx's own stale-pending override — a
+  // generated book stuck in 'pending' (e.g. a server restart mid-
+  // generation) reads as 'failed' once its createdAt is more than 5
+  // minutes old, display-only (never written back to Firestore). This also
+  // naturally stops BookshelfPendingPoller from polling forever for a
+  // permanently-stuck book, since hasPendingGeneration is computed from
+  // this same mapped array.
+  test('Fix 6: a pending book with createdAt more than 5 minutes old renders as failed; a recent pending book still shows pending', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:10:00.000Z'));
+
+      const staleCreatedAt = { toDate: () => new Date('2026-01-01T00:00:00.000Z') }; // 10 min old
+      const recentCreatedAt = { toDate: () => new Date('2026-01-01T00:09:00.000Z') }; // 1 min old
+
+      const db = createFakeFirestore(
+        [
+          {
+            id: 'book-stale',
+            userId: 'user-1',
+            title: 'Stale Pending Book',
+            language: 'english',
+            source: 'ai_generated',
+            generationStatus: 'pending',
+            createdAt: staleCreatedAt as unknown,
+          },
+          {
+            id: 'book-recent',
+            userId: 'user-1',
+            title: 'Recent Pending Book',
+            language: 'spanish',
+            source: 'ai_generated',
+            generationStatus: 'pending',
+            createdAt: recentCreatedAt as unknown,
+          },
+        ],
+        { 'book-stale': [], 'book-recent': [] }
+      );
+      mockGetFirestore.mockReturnValue(db);
+      mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+      const jsx = await BookshelfPage();
+      render(jsx);
+
+      // Stale pending -> displayed as failed, not as still-generating.
+      expect(screen.getByText('Stale Pending Book')).toBeInTheDocument();
+      expect(screen.getByText(/fail/i)).toBeInTheDocument();
+
+      // Recent pending -> still shows the pending placeholder.
+      expect(screen.getByText('Recent Pending Book')).toBeInTheDocument();
+      expect(screen.getByText(/generating/i)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('the Bookshelf polls (re-fetches) while any book is pending, and stops once none are', async () => {
     vi.useFakeTimers();
     try {
