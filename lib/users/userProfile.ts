@@ -1,5 +1,6 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
+import { getOrSet, invalidate } from '@/lib/cache/serverCache';
 
 export type Theme = 'light' | 'dark' | 'system';
 
@@ -19,16 +20,18 @@ export const DEFAULT_THEME: Theme = 'system';
  * account has no profile doc yet (every account today has none).
  */
 export async function getUserProfile(userId: string): Promise<UserProfile> {
-  const db = getFirestore(getAdminApp());
-  const snap = await db.collection('users').doc(userId).get();
-  const data = (snap.exists ? snap.data() : undefined) as Partial<UserProfile> | undefined;
+  return getOrSet(`profile:${userId}`, 30_000, async () => {
+    const db = getFirestore(getAdminApp());
+    const snap = await db.collection('users').doc(userId).get();
+    const data = (snap.exists ? snap.data() : undefined) as Partial<UserProfile> | undefined;
 
-  return {
-    nativeLanguage: data?.nativeLanguage ?? null,
-    avatarUrl: data?.avatarUrl ?? null,
-    theme: data?.theme ?? DEFAULT_THEME,
-    recognitionThreshold: data?.recognitionThreshold ?? DEFAULT_RECOGNITION_THRESHOLD,
-  };
+    return {
+      nativeLanguage: data?.nativeLanguage ?? null,
+      avatarUrl: data?.avatarUrl ?? null,
+      theme: data?.theme ?? DEFAULT_THEME,
+      recognitionThreshold: data?.recognitionThreshold ?? DEFAULT_RECOGNITION_THRESHOLD,
+    };
+  });
 }
 
 /**
@@ -42,4 +45,5 @@ export async function updateUserProfile(
 ): Promise<void> {
   const db = getFirestore(getAdminApp());
   await db.collection('users').doc(userId).set(fields, { merge: true });
+  invalidate(`profile:${userId}`);
 }

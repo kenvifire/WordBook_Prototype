@@ -7,6 +7,7 @@ vi.mock('firebase-admin/firestore', () => ({
 vi.mock('@/lib/firebase/admin', () => ({ getAdminApp: vi.fn(() => ({})) }));
 
 import { getFirestore } from 'firebase-admin/firestore';
+import { invalidatePrefix } from '@/lib/cache/serverCache';
 import { computeRecognitionRate, maybeUnlockNextSection } from './sectionService';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
@@ -128,6 +129,9 @@ function getSection(store: Map<string, StoredDoc>, bookId: string, sectionId: st
 
 beforeEach(() => {
   mockGetFirestore.mockReset();
+  // getUserProfile (called by maybeUnlockNextSection) now caches by uid;
+  // clear it so one test's cached profile never leaks into another's.
+  invalidatePrefix('profile:');
 });
 
 describe('computeRecognitionRate', () => {

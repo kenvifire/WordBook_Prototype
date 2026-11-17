@@ -7,6 +7,7 @@ vi.mock('firebase-admin/firestore', () => ({
 vi.mock('@/lib/firebase/admin', () => ({ getAdminApp: vi.fn(() => ({})) }));
 
 import { getFirestore } from 'firebase-admin/firestore';
+import { invalidatePrefix } from '@/lib/cache/serverCache';
 import { getUserProfile, updateUserProfile } from './userProfile';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
@@ -20,6 +21,7 @@ type StoredDoc = Record<string, unknown>;
 function createFakeFirestore() {
   const store = new Map<string, StoredDoc>();
   const setCalls: { path: string; data: Record<string, unknown>; options: unknown }[] = [];
+  const getCalls: string[] = [];
 
   function makeDocRef(path: string): any {
     const id = path.split('/').pop()!;
@@ -27,6 +29,7 @@ function createFakeFirestore() {
       id,
       path,
       async get() {
+        getCalls.push(path);
         const data = store.get(path);
         return {
           exists: data !== undefined,
@@ -61,7 +64,7 @@ function createFakeFirestore() {
     },
   };
 
-  return { db, store, setCalls };
+  return { db, store, setCalls, getCalls };
 }
 
 function putUser(store: Map<string, StoredDoc>, userId: string, data: StoredDoc) {
@@ -70,6 +73,9 @@ function putUser(store: Map<string, StoredDoc>, userId: string, data: StoredDoc)
 
 beforeEach(() => {
   mockGetFirestore.mockReset();
+  // The profile cache is module-level state shared across tests in this
+  // file; clear it so one test's cached read never leaks into another's.
+  invalidatePrefix('profile:');
 });
 
 describe('getUserProfile', () => {
@@ -145,5 +151,28 @@ describe('updateUserProfile', () => {
     await updateUserProfile('u2', { nativeLanguage: 'german' });
 
     expect(store.get('users/u2')).toEqual({ nativeLanguage: 'german' });
+  });
+});
+
+describe('getUserProfile caching', () => {
+  test('a second getUserProfile call for the same uid does not re-query Firestore', async () => {
+    const { db, getCalls } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    await getUserProfile('u1');
+    await getUserProfile('u1');
+
+    expect(getCalls).toHaveLength(1);
+  });
+
+  test('updateUserProfile invalidates the cached profile so the next getUserProfile reflects the change', async () => {
+    const { db } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    await getUserProfile('u1'); // warms the cache with defaults
+    await updateUserProfile('u1', { recognitionThreshold: 1.0 });
+    const profile = await getUserProfile('u1');
+
+    expect(profile.recognitionThreshold).toBe(1.0); // not the stale cached 0.8
   });
 });
