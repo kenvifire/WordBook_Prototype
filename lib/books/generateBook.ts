@@ -1,6 +1,7 @@
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
 import { isAlreadyExistsError } from '@/lib/firebase/errors';
+import { invalidate } from '@/lib/cache/serverCache';
 import { splitByFixedWordCount } from '@/lib/text/sectionize';
 import { generateStory } from '@/lib/ai/deepseek';
 import { translateWord } from '@/lib/translate/translateApi';
@@ -280,6 +281,11 @@ export async function startGeneratingBook(input: GenerateBookInput): Promise<Gen
   });
 
   const bookId = bookRef.id;
+
+  // Invalidate right after creating the pending book doc so the new (still
+  // 'pending') book shows up on the Bookshelf immediately, not after
+  // listBooks' cache TTL expires.
+  invalidate(`books:${input.userId}`);
 
   // Not awaited — see runGeneration's own comment above. Its promise is
   // deliberately discarded (not returned, not chained) so this function's

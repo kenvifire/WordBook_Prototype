@@ -26,6 +26,7 @@ vi.mock('next/navigation', () => ({
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuthedUser } from '@/lib/firebase/server';
+import { invalidatePrefix } from '@/lib/cache/serverCache';
 import BookshelfPage from './page';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
@@ -95,6 +96,13 @@ beforeEach(() => {
   mockRefresh.mockClear();
   mockGetFirestore.mockReset();
   mockGetAuthedUser.mockReset();
+  // listBooks' cache is module-level state shared across tests in this
+  // file, and every test here reuses the same uid ('user-1') with
+  // different expected book-list fixtures — clear it so one test's cached
+  // result never leaks into another's (same fix lib/sections/
+  // sectionService.test.ts and lib/users/userProfile.test.ts needed for
+  // the profile cache).
+  invalidatePrefix('books:');
 });
 
 describe('BookshelfPage', () => {
@@ -315,6 +323,12 @@ describe('BookshelfPage', () => {
         { 'book-gen': [{ status: 'locked' }] }
       );
       mockGetFirestore.mockReturnValue(readyDb);
+      // listBooks' 15s cache is still warm at this point (only 3s of fake
+      // time has elapsed) — this test is exercising BookshelfPendingPoller's
+      // own start/stop-interval behavior, not the cache's TTL (that's
+      // covered by lib/books/listBooks.test.ts), so force a fresh read here
+      // the same way a real post-TTL request would get one.
+      invalidatePrefix('books:');
 
       const secondJsx = await BookshelfPage();
       rerender(secondJsx);

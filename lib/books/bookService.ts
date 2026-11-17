@@ -1,6 +1,7 @@
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
 import { isAlreadyExistsError } from '@/lib/firebase/errors';
+import { invalidate } from '@/lib/cache/serverCache';
 import { Section, splitByChapters, splitByPageCount } from '@/lib/text/sectionize';
 import { extractVocabulary } from '@/lib/text/extractVocabulary';
 import { translateWord } from '@/lib/translate/translateApi';
@@ -246,6 +247,12 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
     createdAt: FieldValue.serverTimestamp(),
   });
   const bookId = bookRef.id;
+
+  // The book already needs to appear on the Bookshelf before sectioning is
+  // chosen (it shows as `needsSetup` until finalizeSectioning runs), so this
+  // invalidates listBooks' cache right after the book doc write, regardless
+  // of/before the deferred-sectioning step below.
+  invalidate(`books:${userId}`);
 
   await savePendingBookText(userId, bookId, rawText);
 
