@@ -303,6 +303,30 @@ describe('POST /api/books', () => {
     expect(mockAddBook).not.toHaveBeenCalled();
   });
 
+  test('a generic PDF parse failure logs the real underlying cause, not just the swallowed message', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const underlyingCause = new Error('Invalid PDF structure');
+    mockParsePdf.mockRejectedValue(new Error('Could not parse PDF file', { cause: underlyingCause }));
+
+    const formData = new FormData();
+    formData.set('title', 'My PDF Book');
+    const file = new File(['fake pdf bytes'], 'book.pdf', { type: 'application/pdf' });
+    formData.set('file', file);
+
+    const response = await POST(makeRequest(formData));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({ error: 'Could not parse PDF file' });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('PDF parse failed'),
+      underlyingCause
+    );
+
+    consoleErrorSpy.mockRestore();
+  });
+
   test('returns 401 when there is no authenticated user', async () => {
     mockGetAuthedUser.mockResolvedValue(null);
 

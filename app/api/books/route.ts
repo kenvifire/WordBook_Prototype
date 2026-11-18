@@ -63,6 +63,10 @@ export async function POST(request: NextRequest) {
         parsed = await parsePdf(buffer);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Could not parse PDF file';
+        // parsePdf wraps any non-"no text" failure into this one generic
+        // message (see lib/pdf/parsePdf.ts), discarding the real pdfjs-dist
+        // error unless it's logged here from err.cause.
+        console.error('PDF parse failed:', err instanceof Error && err.cause ? err.cause : err);
         return NextResponse.json({ error: message }, { status: 400 });
       }
 
