@@ -86,4 +86,15 @@ describe('RootLayout', () => {
     expect(body.props.className).toContain('mock-font-figtree-variable');
     expect(body.props.className).toContain('mock-font-source-serif-variable');
   });
+
+  test('body carries the base paper/ink/font-ui classes, so page margins never fall back to browser white', async () => {
+    mockGetAuthedUser.mockResolvedValue(null);
+
+    const jsx = await RootLayout({ children: <div>content</div> });
+    const body = jsx.props.children;
+
+    expect(body.props.className).toContain('bg-paper');
+    expect(body.props.className).toContain('text-ink');
+    expect(body.props.className).toContain('font-ui');
+  });
 });

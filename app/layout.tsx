@@ -33,7 +33,9 @@ export default async function RootLayout({
 
   return (
     <html lang="en" data-theme={theme === 'system' ? undefined : theme}>
-      <body className={`${figtree.variable} ${sourceSerif.variable}`}>
+      <body
+        className={`${figtree.variable} ${sourceSerif.variable} bg-paper font-ui text-ink`}
+      >
         <HeaderNav />
         {children}
         <TabBar />

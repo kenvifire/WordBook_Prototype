@@ -12,13 +12,15 @@ const STATUS_LABELS: Record<string, string> = {
 // template-string interpolation, so Tailwind's build-time scanner finds
 // every class name.
 const STATUS_STYLES: Record<string, { className: string; checkmark: boolean }> = {
-  locked: { className: 'bg-locked text-paper', checkmark: false },
-  ready_to_practice: { className: 'bg-practicing text-paper', checkmark: false },
+  // locked/practicing are light fills — text-paper fails WCAG contrast at
+  // this size (~2.5:1/~2.7:1); text-ink passes (~5.2:1/~5.0:1).
+  locked: { className: 'bg-locked text-ink', checkmark: false },
+  ready_to_practice: { className: 'bg-practicing text-ink', checkmark: false },
   ready_to_read: { className: 'bg-unlocked text-paper', checkmark: false },
   completed: { className: 'bg-unlocked text-paper', checkmark: true },
 };
 
-const DEFAULT_STYLE = { className: 'bg-locked text-paper', checkmark: false };
+const DEFAULT_STYLE = { className: 'bg-locked text-ink', checkmark: false };
 
 export default function SectionStatusBadge({ status }: { status: string }) {
   const label = STATUS_LABELS[status] ?? status;

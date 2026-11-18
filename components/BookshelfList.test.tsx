@@ -31,6 +31,20 @@ describe('BookshelfList', () => {
     expect(screen.queryByText(/sections unlocked/)).not.toBeInTheDocument();
   });
 
+  // text-locked directly as foreground text on the surface background fails
+  // WCAG contrast (~2.7:1 in light mode); text-ink-muted, already used for
+  // this file's other secondary text (e.g. "by {author}"), passes (~5.9:1).
+  test('"Not yet started" uses text-ink-muted for sufficient contrast, not text-locked', () => {
+    render(
+      <BookshelfList
+        books={[makeBook({ id: 'book-pending', title: 'Pending Book', needsSetup: true })]}
+      />
+    );
+
+    expect(screen.getByText('Not yet started').className).not.toContain('text-locked');
+    expect(screen.getByText('Not yet started').className).toContain('text-ink-muted');
+  });
+
   // Replaces the old "N of M sections unlocked" text with a visual spine —
   // this is also the brief's own required spine test, reusing the same
   // fixture values rather than duplicating a near-identical test.
@@ -56,6 +70,45 @@ describe('BookshelfList', () => {
     expect(segments).toHaveLength(5);
     expect(segments.filter((s) => s.className.includes('bg-unlocked'))).toHaveLength(2);
     expect(segments.filter((s) => s.className.includes('bg-locked'))).toHaveLength(3);
+  });
+
+  test('a book with many sections wraps its spine instead of overflowing the card width', () => {
+    render(
+      <BookshelfList
+        books={[
+          makeBook({
+            id: 'book-long',
+            title: 'Long Book',
+            needsSetup: false,
+            sectionsTotal: 400,
+            sectionsUnlocked: 10,
+          }),
+        ]}
+      />
+    );
+
+    const segments = screen.getAllByTestId('spine-segment');
+    expect(segments).toHaveLength(400);
+    expect(segments[0].parentElement?.className).toContain('flex-wrap');
+  });
+
+  test("the spine announces its progress to screen readers, not just a mute label", () => {
+    render(
+      <BookshelfList
+        books={[
+          makeBook({
+            id: 'book-started',
+            title: 'Started Book',
+            needsSetup: false,
+            sectionsTotal: 5,
+            sectionsUnlocked: 2,
+          }),
+        ]}
+      />
+    );
+
+    const spine = screen.getByRole('img', { name: '2 of 5 sections unlocked' });
+    expect(spine).toBeInTheDocument();
   });
 
   test('the selected language filter chip uses bg-ink/text-paper, not a progress color', async () => {

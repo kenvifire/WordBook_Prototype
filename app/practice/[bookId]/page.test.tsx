@@ -235,4 +235,21 @@ describe('BookPracticePage', () => {
     expect(mockRedirect).toHaveBeenCalledWith('/login');
     expect(mockGetPracticeQueueForBook).not.toHaveBeenCalled();
   });
+
+  test('the page root uses the design tokens, not an unstyled white shell', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1' });
+    mockGetPracticeQueueForBook.mockResolvedValue([
+      { id: 'w1', word: 'ephemeral', definition: 'lasting a short time' },
+    ]);
+
+    const jsx = await BookPracticePage({ params: Promise.resolve({ bookId: 'book-1' }) });
+    render(jsx);
+
+    const heading = screen.getByRole('heading', { name: /^practice$/i });
+    expect(heading.className).toContain('text-ink');
+    expect(heading.closest('main')?.className).toContain('bg-paper');
+  });
 });

@@ -117,9 +117,13 @@ export default function BookshelfList({ books }: { books: BookshelfBook[] }) {
                     <span className="text-sm text-ink-muted">by {book.author}</span>
                   )}
                   {book.needsSetup ? (
-                    <p className="mt-1 text-sm text-locked">Not yet started</p>
+                    <p className="mt-1 text-sm text-ink-muted">Not yet started</p>
                   ) : (
-                    <div className="mt-1 flex gap-0.5" aria-label="Section progress">
+                    <div
+                      className="mt-1 flex flex-wrap gap-0.5"
+                      role="img"
+                      aria-label={`${book.sectionsUnlocked} of ${book.sectionsTotal} sections unlocked`}
+                    >
                       {Array.from({ length: book.sectionsTotal }).map((_, i) => (
                         <span
                           key={i}

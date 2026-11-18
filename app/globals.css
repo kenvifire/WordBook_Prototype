@@ -23,4 +23,22 @@
   --color-practicing: 209 166 96;
   --color-unlocked: 92 140 115;
   --color-error: 201 122 100;
+  color-scheme: dark;
+}
+
+/* theme: 'system' sets no data-theme attribute at all (see app/layout.tsx),
+   so an OS/browser dark preference is only honored here, not above. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --color-paper: 26 29 25;
+    --color-surface: 35 39 31;
+    --color-ink: 237 234 226;
+    --color-ink-muted: 166 169 158;
+    --color-hairline: 56 60 50;
+    --color-locked: 110 106 96;
+    --color-practicing: 209 166 96;
+    --color-unlocked: 92 140 115;
+    --color-error: 201 122 100;
+    color-scheme: dark;
+  }
 }

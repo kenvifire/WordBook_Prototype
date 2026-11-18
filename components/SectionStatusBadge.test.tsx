@@ -40,4 +40,16 @@ describe('SectionStatusBadge', () => {
     expect(badge.className).toContain('bg-unlocked');
     expect(badge.textContent).toContain('✓');
   });
+
+  // The locked and practicing fills are both too light for white (text-paper)
+  // text to pass WCAG AA at this badge's text-xs size (computed ~2.5:1 and
+  // ~2.7:1 in light mode) — text-ink against those same fills passes
+  // comfortably (~5.2:1/~5.0:1), without changing the fill hues themselves.
+  test('locked and practicing badges use text-ink for sufficient contrast, not text-paper', () => {
+    render(<SectionStatusBadge status="locked" />);
+    expect(screen.getByText('Locked').className).not.toContain('text-paper');
+
+    render(<SectionStatusBadge status="ready_to_practice" />);
+    expect(screen.getByText('Practice to unlock').className).not.toContain('text-paper');
+  });
 });

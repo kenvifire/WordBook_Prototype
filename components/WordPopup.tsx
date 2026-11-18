@@ -96,7 +96,7 @@ export default function WordPopup({
   }
 
   return (
-    <span className="relative inline-block font-ui">
+    <span className="relative inline-block">
       <span
         role="button"
         tabIndex={0}
@@ -110,7 +110,7 @@ export default function WordPopup({
       </span>
 
       {open && (
-        <span className="absolute left-0 top-full z-10 mt-1 flex w-60 flex-col gap-2 rounded border border-hairline bg-surface p-3 text-sm shadow-lg">
+        <span className="absolute left-0 top-full z-10 mt-1 flex w-60 flex-col gap-2 rounded border border-hairline bg-surface p-3 text-sm font-ui shadow-lg">
           <button
             type="button"
             onClick={handleClose}

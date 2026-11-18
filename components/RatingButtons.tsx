@@ -15,7 +15,9 @@ const RATINGS: { value: Rating; label: string }[] = [
 // table doesn't license. A literal lookup object, not a template-string
 // interpolation, so Tailwind's build-time scanner finds every class name.
 const RATING_COLOR_CLASSES: Record<Rating, string> = {
-  again: 'bg-practicing text-paper',
+  // bg-practicing is a light fill — text-ink passes WCAG contrast where
+  // text-paper (~2.7:1) fails at this size.
+  again: 'bg-practicing text-ink',
   hard: 'bg-unlocked text-paper',
   good: 'bg-unlocked text-paper',
   easy: 'bg-unlocked text-paper',

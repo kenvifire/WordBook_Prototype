@@ -290,4 +290,19 @@ describe('WordPopup', () => {
     expect(addButton.className).toContain('bg-unlocked');
     expect(addButton.className).not.toContain('bg-ink');
   });
+
+  test('the word itself inherits font-reading from its reading-surface ancestor, not font-ui', () => {
+    render(
+      <p className="font-reading">
+        <WordPopup word="luminous" language="english" bookId="book-1" sectionId="section-1" />
+      </p>
+    );
+
+    const wordButton = screen.getByRole('button', { name: 'luminous' });
+    let node: HTMLElement | null = wordButton;
+    while (node && node.tagName !== 'P') {
+      expect(node.className).not.toContain('font-ui');
+      node = node.parentElement;
+    }
+  });
 });

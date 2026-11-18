@@ -53,4 +53,12 @@ describe('RatingButtons', () => {
     expect(positive[0]).toBe(positive[1]);
     expect(positive[1]).toBe(positive[2]);
   });
+
+  // bg-practicing is a light fill — text-paper fails WCAG contrast at this
+  // size (~2.7:1 in light mode); text-ink passes (~5.0:1).
+  test('"Again" uses text-ink for sufficient contrast against the practicing fill, not text-paper', () => {
+    render(<RatingButtons onRate={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: 'Again' }).className).not.toContain('text-paper');
+  });
 });
