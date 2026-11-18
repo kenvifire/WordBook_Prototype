@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
 import { getAuthedUser } from '@/lib/firebase/server';
+import { invalidate } from '@/lib/cache/serverCache';
 import WordPopup from '@/components/WordPopup';
 
 type BookData = {
@@ -125,6 +126,12 @@ export default async function ReadPage({
       .collection('sections')
       .doc(sectionId)
       .update({ status: 'completed' });
+
+    // The Book Detail page's section list is cached per-bookId (see
+    // lib/sections/listSections.ts) — invalidate it right after the write
+    // above so the completed status is visible on the very next load
+    // (the redirect below) rather than a stale cached value for up to 15s.
+    invalidate(`sections:${id}`);
 
     revalidatePath(`/book/${id}`);
     redirect(`/book/${id}`);

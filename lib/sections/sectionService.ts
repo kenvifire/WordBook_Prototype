@@ -1,6 +1,7 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
 import { getUserProfile } from '@/lib/users/userProfile';
+import { invalidate } from '@/lib/cache/serverCache';
 
 export type WordForRecognition = {
   lastRating: string | null;
@@ -20,6 +21,20 @@ export function computeRecognitionRate(words: WordForRecognition[]): number {
 }
 
 export async function maybeUnlockNextSection(bookId: string, sectionId: string): Promise<void> {
+  // listSections caches this book's section list — invalidate it
+  // unconditionally whenever this function returns (via `finally`), even on
+  // an early-return path that changed nothing. An unnecessary invalidation
+  // is harmless; the alternative (invalidating only on the branches that
+  // actually wrote something) risks missing one. See
+  // lib/sections/listSections.ts.
+  try {
+    await maybeUnlockNextSectionInner(bookId, sectionId);
+  } finally {
+    invalidate(`sections:${bookId}`);
+  }
+}
+
+async function maybeUnlockNextSectionInner(bookId: string, sectionId: string): Promise<void> {
   const db = getFirestore(getAdminApp());
   const sectionRef = db.collection('books').doc(bookId).collection('sections').doc(sectionId);
 

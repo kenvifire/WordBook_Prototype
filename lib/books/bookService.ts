@@ -346,6 +346,17 @@ export async function finalizeSectioning(params: {
     )
   );
 
+  // listSections' cache for this book is pre-emptively empty at this point
+  // (nothing could have populated it before sections existed), so this
+  // invalidation is cheap, but harmless to call unconditionally here. The
+  // books-list cache invalidation is load-bearing: the Bookshelf's
+  // `needsSetup` flag (lib/books/listBooks.ts) is derived from
+  // sectioningMethod, which this function just changed from null to a real
+  // value — without this, the Bookshelf could show a stale "Not yet
+  // started" banner for up to 15s after the user finishes this setup.
+  invalidate(`sections:${bookId}`);
+  invalidate(`books:${userId}`);
+
   await extractAndLinkWords({
     sections,
     bookId,

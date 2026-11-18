@@ -28,6 +28,7 @@ vi.mock('next/navigation', () => ({
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuthedUser } from '@/lib/firebase/server';
+import { invalidatePrefix } from '@/lib/cache/serverCache';
 import BookDetailPage from './page';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
@@ -88,6 +89,14 @@ beforeEach(() => {
   mockNotFound.mockClear();
   mockGetFirestore.mockReset();
   mockGetAuthedUser.mockReset();
+  // The page now calls listSections (lib/sections/listSections.ts), whose
+  // cache is module-level state shared across every test in this file.
+  // Several tests here reuse bookId 'book-1' with a fresh fake Firestore
+  // per test — without clearing the cache, a later test could silently
+  // read an earlier test's stale section list instead of its own. Same fix
+  // lib/books/listBooks.test.ts and lib/sections/listSections.test.ts
+  // needed for their own caches.
+  invalidatePrefix('sections:');
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 });

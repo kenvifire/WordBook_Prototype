@@ -3,15 +3,10 @@ import { notFound, redirect } from 'next/navigation';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
 import { getAuthedUser } from '@/lib/firebase/server';
+import { listSections } from '@/lib/sections/listSections';
 import SectionStatusBadge from '@/components/SectionStatusBadge';
 import SectioningSetupForm from '@/components/SectioningSetupForm';
 import ReadingModeToggle from '@/components/ReadingModeToggle';
-
-type Section = {
-  id: string;
-  sectionNumber: number;
-  status: string;
-};
 
 type BookData = {
   userId: string;
@@ -104,11 +99,7 @@ export default async function BookDetailPage({
     );
   }
 
-  const sectionsSnapshot = await bookRef.collection('sections').orderBy('sectionNumber', 'asc').get();
-  const sections: Section[] = sectionsSnapshot.docs.map((doc) => {
-    const data = doc.data() as { sectionNumber: number; status: string };
-    return { id: doc.id, sectionNumber: data.sectionNumber, status: data.status };
-  });
+  const sections = await listSections(id);
 
   const sectionList =
     sections.length > 0 ? (
