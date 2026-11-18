@@ -70,4 +70,13 @@ describe('GoogleSignInButton', () => {
     await waitFor(() => expect(screen.getByText('Failed to establish session')).toBeInTheDocument());
     expect(mockPush).not.toHaveBeenCalled();
   });
+
+  test('uses the neutral secondary pattern, not the primary bg-ink pattern', () => {
+    render(<GoogleSignInButton />);
+
+    const button = screen.getByRole('button', { name: /continue with google/i });
+    expect(button.className).toContain('bg-surface');
+    expect(button.className).toContain('border-hairline');
+    expect(button.className).not.toContain('bg-ink');
+  });
 });

@@ -43,46 +43,46 @@ export default function SignupPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-4">
-      <h1 className="mb-6 text-2xl font-semibold">Sign up</h1>
+    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center bg-paper px-4 font-ui">
+      <h1 className="mb-6 font-reading text-2xl font-semibold text-ink">Sign up</h1>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">Email</span>
+          <span className="text-sm font-medium text-ink">Email</span>
           <input
             type="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="rounded border px-3 py-2"
+            className="rounded border border-hairline bg-surface px-3 py-2 text-ink"
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">Password</span>
+          <span className="text-sm font-medium text-ink">Password</span>
           <input
             type="password"
             required
             minLength={6}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded border px-3 py-2"
+            className="rounded border border-hairline bg-surface px-3 py-2 text-ink"
           />
         </label>
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-sm text-error">{error}</p>}
         <button
           type="submit"
           disabled={submitting}
-          className="rounded bg-black px-3 py-2 text-white disabled:opacity-50"
+          className="rounded bg-ink px-3 py-2 text-paper disabled:opacity-50"
         >
           {submitting ? 'Signing up…' : 'Sign up'}
         </button>
       </form>
-      <div className="my-4 flex items-center gap-3 text-xs text-gray-500">
-        <div className="h-px flex-1 bg-gray-200" />
+      <div className="my-4 flex items-center gap-3 text-xs text-ink-muted">
+        <div className="h-px flex-1 bg-hairline" />
         or
-        <div className="h-px flex-1 bg-gray-200" />
+        <div className="h-px flex-1 bg-hairline" />
       </div>
       <GoogleSignInButton />
-      <p className="mt-4 text-sm">
+      <p className="mt-4 text-sm text-ink">
         Already have an account?{' '}
         <Link href="/login" className="underline">
           Log in

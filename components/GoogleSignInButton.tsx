@@ -38,16 +38,16 @@ export default function GoogleSignInButton() {
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2 font-ui">
       <button
         type="button"
         onClick={handleClick}
         disabled={submitting}
-        className="rounded border px-3 py-2 disabled:opacity-50"
+        className="rounded border border-hairline bg-surface px-3 py-2 text-ink disabled:opacity-50"
       >
         {submitting ? 'Connecting…' : 'Continue with Google'}
       </button>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-error">{error}</p>}
     </div>
   );
 }
