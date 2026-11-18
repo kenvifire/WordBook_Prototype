@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import BookshelfList, { type BookshelfBook } from './BookshelfList';
 
 function makeBook(overrides: Partial<BookshelfBook> = {}): BookshelfBook {
@@ -30,7 +31,24 @@ describe('BookshelfList', () => {
     expect(screen.queryByText(/sections unlocked/)).not.toBeInTheDocument();
   });
 
-  test('a book with needsSetup: false and real section counts still shows the normal "N of M" text', () => {
+  // text-locked directly as foreground text on the surface background fails
+  // WCAG contrast (~2.7:1 in light mode); text-ink-muted, already used for
+  // this file's other secondary text (e.g. "by {author}"), passes (~5.9:1).
+  test('"Not yet started" uses text-ink-muted for sufficient contrast, not text-locked', () => {
+    render(
+      <BookshelfList
+        books={[makeBook({ id: 'book-pending', title: 'Pending Book', needsSetup: true })]}
+      />
+    );
+
+    expect(screen.getByText('Not yet started').className).not.toContain('text-locked');
+    expect(screen.getByText('Not yet started').className).toContain('text-ink-muted');
+  });
+
+  // Replaces the old "N of M sections unlocked" text with a visual spine —
+  // this is also the brief's own required spine test, reusing the same
+  // fixture values rather than duplicating a near-identical test.
+  test("a book's spine shows filled segments in the unlocked color up to sectionsUnlocked, unfilled in locked color for the rest", () => {
     render(
       <BookshelfList
         books={[
@@ -45,7 +63,105 @@ describe('BookshelfList', () => {
       />
     );
 
-    expect(screen.getByText('2 of 5 sections unlocked')).toBeInTheDocument();
     expect(screen.queryByText('Not yet started')).not.toBeInTheDocument();
+    expect(screen.queryByText(/sections unlocked/)).not.toBeInTheDocument();
+
+    const segments = screen.getAllByTestId('spine-segment');
+    expect(segments).toHaveLength(5);
+    expect(segments.filter((s) => s.className.includes('bg-unlocked'))).toHaveLength(2);
+    expect(segments.filter((s) => s.className.includes('bg-locked'))).toHaveLength(3);
+  });
+
+  test('a book with many sections wraps its spine instead of overflowing the card width', () => {
+    render(
+      <BookshelfList
+        books={[
+          makeBook({
+            id: 'book-long',
+            title: 'Long Book',
+            needsSetup: false,
+            sectionsTotal: 400,
+            sectionsUnlocked: 10,
+          }),
+        ]}
+      />
+    );
+
+    const segments = screen.getAllByTestId('spine-segment');
+    expect(segments).toHaveLength(400);
+    expect(segments[0].parentElement?.className).toContain('flex-wrap');
+  });
+
+  test("the spine announces its progress to screen readers, not just a mute label", () => {
+    render(
+      <BookshelfList
+        books={[
+          makeBook({
+            id: 'book-started',
+            title: 'Started Book',
+            needsSetup: false,
+            sectionsTotal: 5,
+            sectionsUnlocked: 2,
+          }),
+        ]}
+      />
+    );
+
+    const spine = screen.getByRole('img', { name: '2 of 5 sections unlocked' });
+    expect(spine).toBeInTheDocument();
+  });
+
+  test('the selected language filter chip uses bg-ink/text-paper, not a progress color', async () => {
+    const user = userEvent.setup();
+    render(
+      <BookshelfList
+        books={[
+          makeBook({ id: 'b1', language: 'english' }),
+          makeBook({ id: 'b2', language: 'spanish' }),
+        ]}
+      />
+    );
+
+    const spanishChip = screen.getByRole('button', { name: 'spanish' });
+    await user.click(spanishChip);
+
+    expect(spanishChip.className).toContain('bg-ink');
+    expect(spanishChip.className).not.toMatch(/bg-(locked|practicing|unlocked|error)\b/);
+
+    const allChip = screen.getByRole('button', { name: 'All' });
+    expect(allChip.className).toContain('bg-surface');
+    expect(allChip.className).toContain('border-hairline');
+  });
+
+  test('a failed generation card uses the error color, not the practicing color', () => {
+    render(
+      <BookshelfList books={[makeBook({ id: 'b-failed', generationStatus: 'failed' })]} />
+    );
+
+    const card = screen.getByText('Generation failed. Please try again.').closest('div');
+    expect(card?.className).toContain('error');
+    expect(card?.className).not.toContain('practicing');
+  });
+
+  // The implementation gates the sweep behind Tailwind's motion-safe:
+  // variant (a pure-CSS media query), rather than a JS-level conditional —
+  // so the way this requirement is actually verifiable is by confirming the
+  // class carries that prefix (if it didn't, the animation would run
+  // unconditionally and this assertion would fail), not by mocking
+  // matchMedia and checking for an absent class, which wouldn't detect
+  // anything since the class string itself never changes at runtime.
+  test("the Bookshelf's generating-sweep animation is gated behind motion-safe, respecting prefers-reduced-motion", () => {
+    render(<BookshelfList books={[makeBook({ id: 'b-pending', generationStatus: 'pending' })]} />);
+
+    const sweep = screen.getByTestId('generating-sweep');
+    expect(sweep.className).toMatch(/motion-safe:animate-/);
+  });
+
+  test('the "no books in this language" empty state uses design tokens, not ad-hoc gray', () => {
+    render(<BookshelfList books={[]} />);
+
+    const emptyState = screen.getByText(/no books in this language/i);
+    expect(emptyState.className).toContain('text-ink-muted');
+    expect(emptyState.className).not.toContain('text-gray-600');
   });
 });

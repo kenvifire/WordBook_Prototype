@@ -26,7 +26,7 @@ export default function ReadingModeToggle({
   const [mode, setMode] = useState<Mode>('section');
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 font-ui">
       <div className="flex items-center justify-between">
         <div role="group" aria-label="Reading mode" className="flex gap-2">
           <button
@@ -34,7 +34,9 @@ export default function ReadingModeToggle({
             onClick={() => setMode('free')}
             aria-pressed={mode === 'free'}
             className={`rounded px-3 py-1 text-sm ${
-              mode === 'free' ? 'bg-black text-white' : 'border'
+              mode === 'free'
+                ? 'bg-ink text-paper'
+                : 'border border-hairline bg-surface text-ink-muted'
             }`}
           >
             Free reading
@@ -44,19 +46,21 @@ export default function ReadingModeToggle({
             onClick={() => setMode('section')}
             aria-pressed={mode === 'section'}
             className={`rounded px-3 py-1 text-sm ${
-              mode === 'section' ? 'bg-black text-white' : 'border'
+              mode === 'section'
+                ? 'bg-ink text-paper'
+                : 'border border-hairline bg-surface text-ink-muted'
             }`}
           >
             Section reading
           </button>
         </div>
-        <span className="text-xs uppercase text-gray-500">{language}</span>
+        <span className="text-xs uppercase text-ink-muted">{language}</span>
       </div>
 
       {mode === 'section' ? (
         sectionList
       ) : (
-        <Link href={`/book/${bookId}/free`} className="font-medium underline">
+        <Link href={`/book/${bookId}/free`} className="font-medium text-ink underline">
           Start Free reading
         </Link>
       )}

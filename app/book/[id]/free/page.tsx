@@ -63,10 +63,10 @@ export default async function FreeReadPage({
       .filter((w) => w.length > 0);
 
     return (
-      <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-8">
-        <h1 className="text-xl font-semibold">{bookData.title} — Free reading</h1>
+      <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 bg-paper px-4 py-8 font-ui">
+        <h1 className="text-xl font-semibold text-ink">{bookData.title} — Free reading</h1>
 
-        <p className="leading-loose">
+        <p className="max-w-[65ch] font-reading leading-loose text-ink">
           {words.map((word, index) => (
             <span key={index}>
               {/* sectionId="" is intentional, not a placeholder: an empty
@@ -90,8 +90,8 @@ export default async function FreeReadPage({
   });
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-8">
-      <h1 className="text-xl font-semibold">{bookData.title} — Free reading</h1>
+    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 bg-paper px-4 py-8 font-ui">
+      <h1 className="text-xl font-semibold text-ink">{bookData.title} — Free reading</h1>
 
       {sections.map((section) => {
         const sectionWords = section.text
@@ -100,7 +100,7 @@ export default async function FreeReadPage({
           .filter((w) => w.length > 0);
 
         return (
-          <p key={section.id} className="leading-loose">
+          <p key={section.id} className="max-w-[65ch] font-reading leading-loose text-ink">
             {sectionWords.map((word, index) => (
               <span key={index}>
                 <WordPopup

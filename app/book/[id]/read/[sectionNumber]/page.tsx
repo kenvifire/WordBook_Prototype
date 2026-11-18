@@ -138,12 +138,12 @@ export default async function ReadPage({
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-8">
-      <h1 className="text-xl font-semibold">
+    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 bg-paper px-4 py-8 font-ui">
+      <h1 className="text-xl font-semibold text-ink">
         {bookData.title} — Section {sectionData.sectionNumber}
       </h1>
 
-      <p className="leading-loose">
+      <p className="max-w-[65ch] font-reading leading-loose text-ink">
         {sectionWords.map((word, index) => (
           <span key={index}>
             {/* Pre-v3 book docs have no `language` field at all (undefined at
@@ -162,26 +162,29 @@ export default async function ReadPage({
       </p>
 
       <form action={markSectionComplete}>
-        <button type="submit" className="rounded bg-black px-4 py-2 text-white">
+        <button type="submit" className="rounded bg-ink px-4 py-2 text-paper">
           Mark section complete
         </button>
       </form>
 
-      <nav className="flex items-center justify-between border-t pt-4 text-sm">
+      <nav className="flex items-center justify-between border-t border-hairline pt-4 text-sm">
         {previousSectionNumber ? (
-          <Link href={`/book/${id}/read/${previousSectionNumber}`} className="font-medium underline">
+          <Link
+            href={`/book/${id}/read/${previousSectionNumber}`}
+            className="font-medium text-ink underline"
+          >
             ← Previous section
           </Link>
         ) : (
           <span />
         )}
 
-        <Link href={`/book/${id}`} className="font-medium underline">
+        <Link href={`/book/${id}`} className="font-medium text-ink underline">
           Back to book
         </Link>
 
         {nextSectionHref ? (
-          <Link href={nextSectionHref} className="font-medium underline">
+          <Link href={nextSectionHref} className="font-medium text-ink underline">
             Next section →
           </Link>
         ) : (

@@ -84,17 +84,20 @@ export default async function PracticeTabPage() {
   );
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-8">
-      <h1 className="text-2xl font-semibold">Practice</h1>
+    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 bg-paper px-4 py-8 font-ui">
+      <h1 className="text-2xl font-semibold text-ink">Practice</h1>
 
       {books.length > 0 ? (
         <ul className="flex flex-col gap-3">
           {books.map((book) => (
-            <li key={book.id} className="flex items-center justify-between gap-4 rounded border px-3 py-2">
+            <li
+              key={book.id}
+              className="flex items-center justify-between gap-4 rounded border border-hairline bg-surface px-3 py-2"
+            >
               <div>
-                <p className="font-medium">{book.title}</p>
-                {book.author && <p className="text-sm text-gray-600">by {book.author}</p>}
-                <p className="text-sm text-gray-600">
+                <p className="font-medium text-ink">{book.title}</p>
+                {book.author && <p className="text-sm text-ink-muted">by {book.author}</p>}
+                <p className="text-sm text-ink-muted">
                   {book.count} word{book.count === 1 ? '' : 's'} to practice
                 </p>
               </div>
@@ -102,14 +105,14 @@ export default async function PracticeTabPage() {
               {book.practiceable ? (
                 <Link
                   href={`/practice/${book.id}`}
-                  className="shrink-0 rounded bg-black px-3 py-1 text-sm font-medium text-white"
+                  className="shrink-0 rounded bg-ink px-3 py-1 text-sm font-medium text-paper"
                 >
                   Practice
                 </Link>
               ) : (
                 <Link
                   href={`/book/${book.id}`}
-                  className="shrink-0 rounded border px-3 py-1 text-sm font-medium text-gray-500"
+                  className="shrink-0 rounded border border-hairline bg-surface px-3 py-1 text-sm font-medium text-ink-muted"
                 >
                   Read instead
                 </Link>
@@ -118,7 +121,7 @@ export default async function PracticeTabPage() {
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-gray-600">No books yet.</p>
+        <p className="text-sm text-ink-muted">No books yet.</p>
       )}
     </main>
   );

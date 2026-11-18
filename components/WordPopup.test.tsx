@@ -234,4 +234,75 @@ describe('WordPopup', () => {
     expect(await second.findByText('No definition available.')).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
+  test('renders the definition in font-reading inside a bg-surface popover with a hairline border', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ word: 'umbrage', definition: 'a sense of offense' }),
+    });
+    const user = userEvent.setup();
+
+    render(<WordPopup word="umbrage" language="english" bookId="book-1" sectionId="section-1" />);
+    await user.click(screen.getByText('umbrage'));
+
+    const definition = await screen.findByText('a sense of offense');
+    expect(definition.className).toContain('font-reading');
+
+    const popover = definition.closest('span.absolute');
+    expect(popover?.className).toContain('bg-surface');
+    expect(popover?.className).toContain('border-hairline');
+  });
+
+  test('the tapped word gets a practicing-colored underline while the popover is open', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ word: 'diaphanous', definition: 'light and translucent' }),
+    });
+    const user = userEvent.setup();
+
+    render(
+      <WordPopup word="diaphanous" language="english" bookId="book-1" sectionId="section-1" />
+    );
+
+    const wordButton = screen.getByRole('button', { name: 'diaphanous' });
+    expect(wordButton.className).not.toContain('practicing');
+
+    await user.click(wordButton);
+    await screen.findByText('light and translucent');
+    expect(wordButton.className).toContain('practicing');
+
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    expect(wordButton.className).not.toContain('practicing');
+  });
+
+  test('the "Add to my vocabulary" button uses the unlocked color, not the neutral ink pattern', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ word: 'tranquil', definition: 'calm and quiet' }),
+    });
+    const user = userEvent.setup();
+
+    render(<WordPopup word="tranquil" language="english" bookId="book-1" sectionId="section-1" />);
+    await user.click(screen.getByText('tranquil'));
+    await screen.findByText('calm and quiet');
+
+    const addButton = screen.getByRole('button', { name: 'Add to my vocabulary' });
+    expect(addButton.className).toContain('bg-unlocked');
+    expect(addButton.className).not.toContain('bg-ink');
+  });
+
+  test('the word itself inherits font-reading from its reading-surface ancestor, not font-ui', () => {
+    render(
+      <p className="font-reading">
+        <WordPopup word="luminous" language="english" bookId="book-1" sectionId="section-1" />
+      </p>
+    );
+
+    const wordButton = screen.getByRole('button', { name: 'luminous' });
+    let node: HTMLElement | null = wordButton;
+    while (node && node.tagName !== 'P') {
+      expect(node.className).not.toContain('font-ui');
+      node = node.parentElement;
+    }
+  });
 });

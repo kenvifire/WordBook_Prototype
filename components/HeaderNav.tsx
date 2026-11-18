@@ -7,8 +7,12 @@ import Link from 'next/link';
 // there's no session, so no auth-aware rendering is needed here.
 export function HeaderNav() {
   return (
-    <nav className="flex justify-end border-b px-4 py-3 text-sm font-medium">
-      <Link href="/settings" aria-label="Settings" className="text-lg hover:underline">
+    <nav className="flex justify-end border-b border-hairline bg-surface px-4 py-3 font-ui text-sm font-medium">
+      <Link
+        href="/settings"
+        aria-label="Settings"
+        className="text-lg text-ink-muted hover:underline"
+      >
         ⚙
       </Link>
     </nav>

@@ -171,6 +171,36 @@ describe('PracticeTabPage', () => {
     expect(screen.queryByRole('link', { name: /read instead/i })).not.toBeInTheDocument();
   });
 
+  test('the Practice tab list shows each book\'s practiceable state using design tokens, not ad-hoc colors', async () => {
+    const db = createFakeFirestore([
+      { id: 'book-1', userId: 'user-1', title: 'Practiceable Book' },
+      { id: 'book-2', userId: 'user-1', title: 'Fully Read Book' },
+    ]);
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    mockGetPracticeQueueForBook.mockImplementation((_uid: string, bookId: string) =>
+      Promise.resolve(bookId === 'book-1' ? [{ id: 'w1', word: 'alpha', definition: 'def-a' }] : [])
+    );
+
+    const jsx = await PracticeTabPage();
+    render(jsx);
+
+    // Task 8's Step 3 resolves the Interfaces block's locked/unlocked mention
+    // in favor of the same bg-ink/bg-surface primary/secondary pattern every
+    // other action pair in this redesign uses — Practice/Read-instead are
+    // navigational actions, not progress indicators, so no progress color.
+    const practiceLink = screen.getByRole('link', { name: /^practice$/i });
+    expect(practiceLink.className).toContain('bg-ink');
+    expect(practiceLink.className).toContain('text-paper');
+    expect(practiceLink.className).not.toMatch(/bg-(locked|practicing|unlocked|error|black)\b/);
+
+    const readLink = screen.getByRole('link', { name: /read instead/i });
+    expect(readLink.className).toContain('bg-surface');
+    expect(readLink.className).toContain('border-hairline');
+    expect(readLink.className).toContain('text-ink-muted');
+    expect(readLink.className).not.toContain('text-gray-500');
+  });
+
   test('redirects to /login when there is no authed user', async () => {
     mockGetAuthedUser.mockResolvedValue(null);
 

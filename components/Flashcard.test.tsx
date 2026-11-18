@@ -36,4 +36,17 @@ describe('Flashcard', () => {
 
     expect(onRate).toHaveBeenCalledWith('good');
   });
+
+  test('renders the word and definition in font-reading inside a bg-surface card', async () => {
+    const user = userEvent.setup();
+    render(<Flashcard word={word} onRate={vi.fn()} />);
+
+    const card = screen.getByText('ephemeral').closest('div.flex.flex-col');
+    expect(card?.className).toContain('bg-surface');
+    expect(screen.getByText('ephemeral').className).toContain('font-reading');
+
+    await user.click(screen.getByRole('button', { name: 'Show definition' }));
+
+    expect(screen.getByText('lasting a very short time').className).toContain('font-reading');
+  });
 });

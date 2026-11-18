@@ -65,28 +65,28 @@ export default function SectioningSetupForm({
   }
 
   return (
-    <div className="flex flex-col gap-4 rounded border p-4">
-      <h2 className="text-lg font-semibold">Set up this book</h2>
-      <p className="text-sm text-gray-600">
+    <div className="flex flex-col gap-4 rounded border border-hairline bg-surface p-4 font-ui">
+      <h2 className="text-lg font-semibold text-ink">Set up this book</h2>
+      <p className="text-sm text-ink-muted">
         Choose how to split this book into sections before practicing its vocabulary — or skip
         straight to Free reading below.
       </p>
 
       <form onSubmit={handlePageCountSubmit} className="flex flex-col gap-2">
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">Pages per section</span>
+          <span className="text-sm font-medium text-ink">Pages per section</span>
           <input
             type="number"
             min={1}
             value={pagesPerSection}
             onChange={(e) => setPagesPerSection(Number(e.target.value))}
-            className="w-24 rounded border px-3 py-2"
+            className="w-24 rounded border border-hairline bg-surface px-3 py-2 text-ink"
           />
         </label>
         <button
           type="submit"
           disabled={submitting}
-          className="rounded bg-black px-3 py-2 text-white disabled:opacity-50"
+          className="rounded bg-ink px-3 py-2 text-paper disabled:opacity-50"
         >
           Section by page count
         </button>
@@ -97,15 +97,15 @@ export default function SectioningSetupForm({
           type="button"
           disabled={submitting}
           onClick={() => void submit({ method: 'by_chapter' })}
-          className="rounded border px-3 py-2 disabled:opacity-50"
+          className="rounded border border-hairline bg-surface px-3 py-2 text-ink-muted disabled:opacity-50"
         >
           Section by chapter
         </button>
       )}
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-error">{error}</p>}
 
-      <Link href={`/book/${bookId}/free`} className="text-sm underline">
+      <Link href={`/book/${bookId}/free`} className="text-sm text-ink underline">
         Start Free reading without choosing a method
       </Link>
     </div>

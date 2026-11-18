@@ -8,6 +8,22 @@ vi.mock('@/lib/users/userProfile', () => ({
   getUserProfile: vi.fn(),
 }));
 
+// next/font/google's real runtime module is a build-time-only stub (it's
+// rewritten by Next's own compiler, not runnable under plain Vitest/jsdom) —
+// mocked here with controlled return values so the test can assert against
+// a known string, the same way this codebase mocks other Next/Firebase
+// modules that don't run outside their real host.
+vi.mock('next/font/google', () => ({
+  Figtree: vi.fn(() => ({
+    variable: 'mock-font-figtree-variable',
+    className: 'mock-figtree-class',
+  })),
+  Source_Serif_4: vi.fn(() => ({
+    variable: 'mock-font-source-serif-variable',
+    className: 'mock-source-serif-class',
+  })),
+}));
+
 import { getAuthedUser } from '@/lib/firebase/server';
 import { getUserProfile } from '@/lib/users/userProfile';
 import RootLayout from './layout';
@@ -59,5 +75,26 @@ describe('RootLayout', () => {
     const jsx = await RootLayout({ children: <div>content</div> });
 
     expect(jsx.props['data-theme']).toBeUndefined();
+  });
+
+  test('applies the ui and reading font variable classes to the body', async () => {
+    mockGetAuthedUser.mockResolvedValue(null);
+
+    const jsx = await RootLayout({ children: <div>content</div> });
+    const body = jsx.props.children;
+
+    expect(body.props.className).toContain('mock-font-figtree-variable');
+    expect(body.props.className).toContain('mock-font-source-serif-variable');
+  });
+
+  test('body carries the base paper/ink/font-ui classes, so page margins never fall back to browser white', async () => {
+    mockGetAuthedUser.mockResolvedValue(null);
+
+    const jsx = await RootLayout({ children: <div>content</div> });
+    const body = jsx.props.children;
+
+    expect(body.props.className).toContain('bg-paper');
+    expect(body.props.className).toContain('text-ink');
+    expect(body.props.className).toContain('font-ui');
   });
 });

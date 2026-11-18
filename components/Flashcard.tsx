@@ -23,22 +23,24 @@ export default function Flashcard({
   const [revealed, setRevealed] = useState(false);
 
   return (
-    <div className="flex flex-col items-center gap-4 rounded border p-6">
+    <div className="flex flex-col items-center gap-4 rounded border border-hairline bg-surface p-6">
       <div className="flex items-center gap-2">
-        <h2 className="text-2xl font-semibold">{word.word}</h2>
+        <h2 className="font-reading text-2xl font-semibold text-ink">{word.word}</h2>
         <SpeakButton word={word.word} />
       </div>
 
       {revealed ? (
         <>
-          <p className="text-gray-700">{word.definition ?? 'No definition available.'}</p>
+          <p className="font-reading text-ink-muted">
+            {word.definition ?? 'No definition available.'}
+          </p>
           <RatingButtons onRate={onRate} disabled={submitting} />
         </>
       ) : (
         <button
           type="button"
           onClick={() => setRevealed(true)}
-          className="rounded bg-black px-3 py-2 text-white"
+          className="rounded bg-ink px-3 py-2 font-ui text-paper"
         >
           Show definition
         </button>

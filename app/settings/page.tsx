@@ -19,10 +19,10 @@ export default async function SettingsPage() {
   ]);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-4 py-8">
-      <h1 className="mb-6 text-2xl font-semibold">Settings</h1>
-      <p className="mb-6 text-sm">
-        Signed in as <span className="font-medium">{authUser.email}</span>
+    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center bg-paper px-4 py-8 font-ui">
+      <h1 className="mb-6 text-2xl font-semibold text-ink">Settings</h1>
+      <p className="mb-6 text-sm text-ink-muted">
+        Signed in as <span className="font-medium text-ink">{authUser.email}</span>
       </p>
       <SettingsForm initialProfile={profile} />
       <div className="mt-8">

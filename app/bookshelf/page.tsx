@@ -18,8 +18,8 @@ export default async function BookshelfPage() {
   const hasPendingGeneration = books.some((book) => book.generationStatus === 'pending');
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col px-4 py-8">
-      <h1 className="mb-6 text-2xl font-semibold">Bookshelf</h1>
+    <main className="mx-auto flex min-h-screen max-w-2xl flex-col bg-paper px-4 py-8 font-ui">
+      <h1 className="mb-6 text-2xl font-semibold text-ink">Bookshelf</h1>
 
       <BookshelfPendingPoller hasPending={hasPendingGeneration} />
 
@@ -29,7 +29,7 @@ export default async function BookshelfPage() {
       {books.length > 0 ? (
         <BookshelfList books={books} />
       ) : (
-        <p className="text-sm text-gray-600">No books yet. Add one above to get started.</p>
+        <p className="text-sm text-ink-muted">No books yet. Add one above to get started.</p>
       )}
     </main>
   );

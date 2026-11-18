@@ -13,8 +13,8 @@ export default async function StatisticsPage() {
   const stats = await getStatisticsByLanguage(user.uid);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col px-4 py-8">
-      <h1 className="mb-6 text-2xl font-semibold">Statistics</h1>
+    <main className="mx-auto flex min-h-screen max-w-2xl flex-col bg-paper px-4 py-8 font-ui">
+      <h1 className="mb-6 text-2xl font-semibold text-ink">Statistics</h1>
       <StatisticsView stats={stats} />
     </main>
   );

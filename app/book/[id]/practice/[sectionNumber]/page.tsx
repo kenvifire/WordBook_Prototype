@@ -96,8 +96,10 @@ export default async function PracticePage({
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-xl flex-col gap-6 px-4 py-8">
-      <h1 className="text-xl font-semibold">Practice: Section {sectionData.sectionNumber}</h1>
+    <main className="mx-auto flex min-h-screen max-w-xl flex-col gap-6 bg-paper px-4 py-8 font-ui">
+      <h1 className="text-xl font-semibold text-ink">
+        Practice: Section {sectionData.sectionNumber}
+      </h1>
       <PracticeSession
         words={words}
         doneMessage="Done — check back on the book page."

@@ -68,9 +68,9 @@ export default async function BookDetailPage({
 
   if (showSetupScreen) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-2xl flex-col px-4 py-8">
-        <h1 className="mb-1 text-2xl font-semibold">{bookData.title}</h1>
-        {bookData.author && <p className="mb-6 text-sm text-gray-600">by {bookData.author}</p>}
+      <main className="mx-auto flex min-h-screen max-w-2xl flex-col bg-paper px-4 py-8 font-ui">
+        <h1 className="mb-1 text-2xl font-semibold text-ink">{bookData.title}</h1>
+        {bookData.author && <p className="mb-6 text-sm text-ink-muted">by {bookData.author}</p>}
 
         <SectioningSetupForm
           bookId={id}
@@ -90,9 +90,9 @@ export default async function BookDetailPage({
     const stale = bookData.generationStatus === 'pending' && isPendingStale(bookData.createdAt);
     const isFailed = bookData.generationStatus === 'failed' || stale;
     return (
-      <main className="mx-auto flex min-h-screen max-w-2xl flex-col px-4 py-8">
-        <h1 className="mb-1 text-2xl font-semibold">{bookData.title}</h1>
-        <p className="text-sm text-gray-600">
+      <main className="mx-auto flex min-h-screen max-w-2xl flex-col bg-paper px-4 py-8 font-ui">
+        <h1 className="mb-1 text-2xl font-semibold text-ink">{bookData.title}</h1>
+        <p className={`text-sm ${isFailed ? 'text-error' : 'text-ink-muted'}`}>
           {isFailed ? 'Generation failed.' : 'Generating…'}
         </p>
       </main>
@@ -117,14 +117,14 @@ export default async function BookDetailPage({
           return (
             <li
               key={section.id}
-              className="flex items-center justify-between rounded border px-3 py-2"
+              className="flex items-center justify-between rounded border border-hairline bg-surface px-3 py-2"
             >
               {href ? (
-                <Link href={href} className="font-medium hover:underline">
+                <Link href={href} className="font-medium text-ink hover:underline">
                   {label}
                 </Link>
               ) : (
-                <span className="font-medium text-gray-500">{label}</span>
+                <span className="font-medium text-ink-muted">{label}</span>
               )}
               <SectionStatusBadge status={section.status} />
             </li>
@@ -132,13 +132,13 @@ export default async function BookDetailPage({
         })}
       </ul>
     ) : (
-      <p className="text-sm text-gray-600">This book has no sections yet.</p>
+      <p className="text-sm text-ink-muted">This book has no sections yet.</p>
     );
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col px-4 py-8">
-      <h1 className="mb-1 text-2xl font-semibold">{bookData.title}</h1>
-      {bookData.author && <p className="mb-6 text-sm text-gray-600">by {bookData.author}</p>}
+    <main className="mx-auto flex min-h-screen max-w-2xl flex-col bg-paper px-4 py-8 font-ui">
+      <h1 className="mb-1 text-2xl font-semibold text-ink">{bookData.title}</h1>
+      {bookData.author && <p className="mb-6 text-sm text-ink-muted">by {bookData.author}</p>}
 
       <ReadingModeToggle bookId={id} language={bookData.language ?? ''} sectionList={sectionList} />
     </main>

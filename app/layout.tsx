@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Figtree, Source_Serif_4 } from 'next/font/google';
 import { HeaderNav } from '@/components/HeaderNav';
 import { TabBar } from '@/components/TabBar';
 import { getAuthedUser } from '@/lib/firebase/server';
@@ -10,6 +11,18 @@ export const metadata: Metadata = {
   description: 'Learn vocabulary from the books you read.',
 };
 
+const figtree = Figtree({
+  subsets: ['latin'],
+  weight: ['500', '600', '700'],
+  variable: '--font-figtree',
+});
+
+const sourceSerif = Source_Serif_4({
+  subsets: ['latin'],
+  weight: ['400', '600'],
+  variable: '--font-source-serif',
+});
+
 export default async function RootLayout({
   children,
 }: {
@@ -20,7 +33,9 @@ export default async function RootLayout({
 
   return (
     <html lang="en" data-theme={theme === 'system' ? undefined : theme}>
-      <body>
+      <body
+        className={`${figtree.variable} ${sourceSerif.variable} bg-paper font-ui text-ink`}
+      >
         <HeaderNav />
         {children}
         <TabBar />

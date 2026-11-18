@@ -146,4 +146,16 @@ describe('SettingsForm', () => {
     expect(await screen.findByText('Invalid theme')).toBeInTheDocument();
     expect(mockRefresh).not.toHaveBeenCalled();
   });
+
+  test('the active theme option button uses bg-ink/text-paper and inactive options use the neutral style', () => {
+    render(<SettingsForm initialProfile={baseProfile} />);
+
+    const active = screen.getByRole('button', { name: /^light$/i });
+    expect(active.className).toContain('bg-ink');
+    expect(active.className).toContain('text-paper');
+
+    const inactive = screen.getByRole('button', { name: /^dark$/i });
+    expect(inactive.className).toContain('bg-surface');
+    expect(inactive.className).toContain('border-hairline');
+  });
 });

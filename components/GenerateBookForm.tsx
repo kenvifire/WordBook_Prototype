@@ -97,32 +97,32 @@ export default function GenerateBookForm() {
     <form
       onSubmit={handleSubmit}
       noValidate
-      className="mb-8 flex flex-col gap-4 rounded border p-4"
+      className="mb-8 flex flex-col gap-4 rounded border border-hairline bg-surface p-4 font-ui"
     >
-      <h2 className="text-lg font-semibold">Generate a book</h2>
+      <h2 className="text-lg font-semibold text-ink">Generate a book</h2>
 
       <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Topic</span>
+        <span className="text-sm font-medium text-ink">Topic</span>
         <input
           type="text"
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
-          className="rounded border px-3 py-2"
+          className="rounded border border-hairline bg-surface px-3 py-2 text-ink"
         />
       </label>
 
       <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Target language</span>
+        <span className="text-sm font-medium text-ink">Target language</span>
         <input
           type="text"
           value={language}
           onChange={(e) => setLanguage(e.target.value)}
-          className="rounded border px-3 py-2"
+          className="rounded border border-hairline bg-surface px-3 py-2 text-ink"
         />
       </label>
 
       <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Difficulty level</span>
+        <span className="text-sm font-medium text-ink">Difficulty level</span>
         <div role="group" aria-label="Difficulty level" className="flex gap-2">
           {DIFFICULTIES.map((level) => (
             <button
@@ -131,7 +131,9 @@ export default function GenerateBookForm() {
               onClick={() => setDifficulty(level)}
               aria-pressed={difficulty === level}
               className={`rounded px-3 py-1 text-sm capitalize ${
-                difficulty === level ? 'bg-black text-white' : 'border'
+                difficulty === level
+                  ? 'bg-ink text-paper'
+                  : 'border border-hairline bg-surface text-ink-muted'
               }`}
             >
               {level}
@@ -141,23 +143,23 @@ export default function GenerateBookForm() {
       </div>
 
       <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Number of words to learn</span>
+        <span className="text-sm font-medium text-ink">Number of words to learn</span>
         <input
           type="number"
           min={MIN_TARGET_WORD_COUNT}
           max={MAX_TARGET_WORD_COUNT}
           value={targetWordCountInput}
           onChange={(e) => setTargetWordCountInput(e.target.value)}
-          className="rounded border px-3 py-2"
+          className="rounded border border-hairline bg-surface px-3 py-2 text-ink"
         />
       </label>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-error">{error}</p>}
 
       <button
         type="submit"
         disabled={submitting}
-        className="rounded bg-black px-3 py-2 text-white disabled:opacity-50"
+        className="rounded bg-ink px-3 py-2 text-paper disabled:opacity-50"
       >
         {submitting ? 'Generating…' : 'Generate book'}
       </button>

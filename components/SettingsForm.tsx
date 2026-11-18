@@ -109,19 +109,19 @@ export default function SettingsForm({ initialProfile }: Props) {
   }
 
   return (
-    <form onSubmit={handleSave} className="flex flex-col gap-4">
+    <form onSubmit={handleSave} className="flex flex-col gap-4 font-ui">
       <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Native language</span>
+        <span className="text-sm font-medium text-ink">Native language</span>
         <input
           type="text"
           value={nativeLanguage}
           onChange={(e) => setNativeLanguage(e.target.value)}
-          className="rounded border px-3 py-2"
+          className="rounded border border-hairline bg-surface px-3 py-2 text-ink"
         />
       </label>
 
       <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Theme</span>
+        <span className="text-sm font-medium text-ink">Theme</span>
         <div role="group" aria-label="Theme" className="flex gap-2">
           {THEMES.map((t) => (
             <button
@@ -130,7 +130,9 @@ export default function SettingsForm({ initialProfile }: Props) {
               onClick={() => setTheme(t)}
               aria-pressed={theme === t}
               className={`rounded px-3 py-1 text-sm capitalize ${
-                theme === t ? 'bg-black text-white' : 'border'
+                theme === t
+                  ? 'bg-ink text-paper'
+                  : 'border border-hairline bg-surface text-ink-muted'
               }`}
             >
               {t}
@@ -140,7 +142,9 @@ export default function SettingsForm({ initialProfile }: Props) {
       </div>
 
       <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Recognition threshold ({thresholdPercent}%)</span>
+        <span className="text-sm font-medium text-ink">
+          Recognition threshold ({thresholdPercent}%)
+        </span>
         <input
           type="range"
           min={50}
@@ -154,7 +158,7 @@ export default function SettingsForm({ initialProfile }: Props) {
       </label>
 
       <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Avatar</span>
+        <span className="text-sm font-medium text-ink">Avatar</span>
         {avatarUrl && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -169,16 +173,16 @@ export default function SettingsForm({ initialProfile }: Props) {
           aria-label="Avatar"
           onChange={handleAvatarChange}
           disabled={uploadingAvatar}
-          className="rounded border px-3 py-2"
+          className="rounded border border-hairline bg-surface px-3 py-2 text-ink"
         />
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-error">{error}</p>}
 
       <button
         type="submit"
         disabled={submitting}
-        className="rounded bg-black px-3 py-2 text-white disabled:opacity-50"
+        className="rounded bg-ink px-3 py-2 text-paper disabled:opacity-50"
       >
         {submitting ? 'Saving…' : 'Save'}
       </button>

@@ -36,4 +36,29 @@ describe('RatingButtons', () => {
       expect(screen.getByRole('button', { name: label })).toBeDisabled();
     }
   });
+
+  test('gives "Again" the practicing color and Hard/Good/Easy the same unlocked color', () => {
+    render(<RatingButtons onRate={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: 'Again' }).className).toContain('bg-practicing');
+
+    const positive = ['Hard', 'Good', 'Easy'].map(
+      (label) => screen.getByRole('button', { name: label }).className
+    );
+    for (const className of positive) {
+      expect(className).toContain('bg-unlocked');
+    }
+    // all three "recognized it" outcomes share the exact same color — none
+    // differs from the others, per the design doc's two-color split.
+    expect(positive[0]).toBe(positive[1]);
+    expect(positive[1]).toBe(positive[2]);
+  });
+
+  // bg-practicing is a light fill — text-paper fails WCAG contrast at this
+  // size (~2.7:1 in light mode); text-ink passes (~5.0:1).
+  test('"Again" uses text-ink for sufficient contrast against the practicing fill, not text-paper', () => {
+    render(<RatingButtons onRate={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: 'Again' }).className).not.toContain('text-paper');
+  });
 });

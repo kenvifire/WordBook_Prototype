@@ -315,4 +315,26 @@ describe('PracticePage', () => {
     expect(screen.queryByText('squatted')).not.toBeInTheDocument();
     expect(screen.getByText('legitimate')).toBeInTheDocument();
   });
+
+  test('the page root uses the design tokens, not an unstyled white shell', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'ready_to_practice',
+      wordIds: ['word-1'],
+    });
+    putWord(store, 'word-1', { userId: 'user-1', word: 'ephemeral', definition: 'brief' });
+
+    const jsx = await PracticePage({
+      params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }),
+    });
+    render(jsx);
+
+    const heading = screen.getByRole('heading', { name: /practice: section 1/i });
+    expect(heading.className).toContain('text-ink');
+    expect(heading.closest('main')?.className).toContain('bg-paper');
+  });
 });

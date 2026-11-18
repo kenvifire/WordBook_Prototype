@@ -22,9 +22,9 @@ export default function PracticeSession({
 
   if (index >= words.length) {
     return (
-      <div className="flex flex-col gap-4">
-        <p>{doneMessage}</p>
-        <Link href={doneHref} className="font-medium underline">
+      <div className="flex flex-col gap-4 font-ui">
+        <p className="text-ink">{doneMessage}</p>
+        <Link href={doneHref} className="font-medium text-ink underline">
           {doneLinkLabel}
         </Link>
       </div>
@@ -64,11 +64,11 @@ export default function PracticeSession({
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <p className="text-sm text-gray-600">
+    <div className="flex flex-col gap-4 font-ui">
+      <p className="text-sm text-ink-muted">
         {index + 1} / {words.length}
       </p>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-error">{error}</p>}
       <Flashcard key={currentWord.id} word={currentWord} onRate={handleRate} submitting={submitting} />
     </div>
   );
