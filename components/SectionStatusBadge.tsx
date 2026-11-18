@@ -5,21 +5,30 @@ const STATUS_LABELS: Record<string, string> = {
   completed: 'Completed',
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  locked: 'bg-gray-200 text-gray-700',
-  ready_to_practice: 'bg-yellow-100 text-yellow-800',
-  ready_to_read: 'bg-blue-100 text-blue-800',
-  completed: 'bg-green-100 text-green-800',
+// ready_to_read and completed intentionally share the unlocked color (both
+// mean "the gate is cleared") — completed gets a checkmark glyph so the two
+// stay visually distinguishable without a fourth hue the design system's
+// token table doesn't license. A literal lookup object, not a
+// template-string interpolation, so Tailwind's build-time scanner finds
+// every class name.
+const STATUS_STYLES: Record<string, { className: string; checkmark: boolean }> = {
+  locked: { className: 'bg-locked text-paper', checkmark: false },
+  ready_to_practice: { className: 'bg-practicing text-paper', checkmark: false },
+  ready_to_read: { className: 'bg-unlocked text-paper', checkmark: false },
+  completed: { className: 'bg-unlocked text-paper', checkmark: true },
 };
+
+const DEFAULT_STYLE = { className: 'bg-locked text-paper', checkmark: false };
 
 export default function SectionStatusBadge({ status }: { status: string }) {
   const label = STATUS_LABELS[status] ?? status;
-  const colorClass = STATUS_COLORS[status] ?? 'bg-gray-200 text-gray-700';
+  const { className, checkmark } = STATUS_STYLES[status] ?? DEFAULT_STYLE;
 
   return (
     <span
-      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${colorClass}`}
+      className={`inline-block rounded-full px-2 py-0.5 font-ui text-xs font-medium ${className}`}
     >
+      {checkmark ? '✓ ' : ''}
       {label}
     </span>
   );
