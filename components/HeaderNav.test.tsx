@@ -10,4 +10,11 @@ describe('HeaderNav', () => {
     expect(screen.queryByRole('link', { name: /library/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /review/i })).toBeNull();
   });
+
+  test('uses bg-surface and border-hairline', () => {
+    render(<HeaderNav />);
+    const nav = screen.getByRole('link', { name: /settings/i }).closest('nav');
+    expect(nav?.className).toContain('bg-surface');
+    expect(nav?.className).toContain('border-hairline');
+  });
 });
