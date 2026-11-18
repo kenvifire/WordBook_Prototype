@@ -36,4 +36,21 @@ describe('RatingButtons', () => {
       expect(screen.getByRole('button', { name: label })).toBeDisabled();
     }
   });
+
+  test('gives "Again" the practicing color and Hard/Good/Easy the same unlocked color', () => {
+    render(<RatingButtons onRate={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: 'Again' }).className).toContain('bg-practicing');
+
+    const positive = ['Hard', 'Good', 'Easy'].map(
+      (label) => screen.getByRole('button', { name: label }).className
+    );
+    for (const className of positive) {
+      expect(className).toContain('bg-unlocked');
+    }
+    // all three "recognized it" outcomes share the exact same color — none
+    // differs from the others, per the design doc's two-color split.
+    expect(positive[0]).toBe(positive[1]);
+    expect(positive[1]).toBe(positive[2]);
+  });
 });

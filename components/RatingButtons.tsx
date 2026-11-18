@@ -9,6 +9,18 @@ const RATINGS: { value: Rating; label: string }[] = [
   { value: 'easy', label: 'Easy' },
 ];
 
+// "Again" is the only SM-2 outcome meaning "didn't recognize it"; the other
+// three all mean "recognized it," varying only in confidence — so they share
+// one color rather than inventing three shades the design system's token
+// table doesn't license. A literal lookup object, not a template-string
+// interpolation, so Tailwind's build-time scanner finds every class name.
+const RATING_COLOR_CLASSES: Record<Rating, string> = {
+  again: 'bg-practicing text-paper',
+  hard: 'bg-unlocked text-paper',
+  good: 'bg-unlocked text-paper',
+  easy: 'bg-unlocked text-paper',
+};
+
 export default function RatingButtons({
   onRate,
   disabled = false,
@@ -24,7 +36,7 @@ export default function RatingButtons({
           type="button"
           onClick={() => onRate(value)}
           disabled={disabled}
-          className="rounded border px-3 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          className={`rounded px-3 py-1 font-ui text-sm disabled:cursor-not-allowed disabled:opacity-50 ${RATING_COLOR_CLASSES[value]}`}
         >
           {label}
         </button>
