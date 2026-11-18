@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('firebase-admin/firestore', () => ({
@@ -169,7 +169,17 @@ describe('BookshelfPage', () => {
     render(jsx);
 
     expect(screen.getByText('Not yet started')).toBeInTheDocument();
-    expect(screen.getByText('1 of 2 sections unlocked')).toBeInTheDocument();
+
+    // "N of M sections unlocked" text was replaced by a visual spine
+    // (components/BookshelfList.test.tsx's own tests cover the color
+    // mapping in detail) — scoped to "Ready Book"'s own card, which has 2
+    // sections with 1 unlocked, to confirm the page still renders the
+    // right counts end-to-end, not just that BookshelfList can render
+    // *a* spine in isolation.
+    const readyCard = screen.getByText('Ready Book').closest('a');
+    const segments = within(readyCard as HTMLElement).getAllByTestId('spine-segment');
+    expect(segments).toHaveLength(2);
+    expect(segments.filter((s) => s.className.includes('bg-unlocked'))).toHaveLength(1);
   });
 
   test('a book card with generationStatus: "pending" shows a "generating…" placeholder instead of its progress indicator', async () => {

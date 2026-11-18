@@ -89,4 +89,19 @@ describe('GenerateBookForm', () => {
     expect(await screen.findByText('Invalid topic')).toBeInTheDocument();
     expect(mockRefresh).not.toHaveBeenCalled();
   });
+
+  test('the selected difficulty chip uses bg-ink/text-paper, not a progress color', async () => {
+    const user = userEvent.setup();
+    render(<GenerateBookForm />);
+
+    const intermediateChip = screen.getByRole('button', { name: /intermediate/i });
+    await user.click(intermediateChip);
+
+    expect(intermediateChip.className).toContain('bg-ink');
+    expect(intermediateChip.className).not.toMatch(/bg-(locked|practicing|unlocked|error)\b/);
+
+    const beginnerChip = screen.getByRole('button', { name: /beginner/i });
+    expect(beginnerChip.className).toContain('bg-surface');
+    expect(beginnerChip.className).toContain('border-hairline');
+  });
 });

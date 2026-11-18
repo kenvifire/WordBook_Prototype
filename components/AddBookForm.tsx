@@ -79,17 +79,17 @@ export default function AddBookForm() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="mb-8 flex flex-col gap-4 rounded border p-4"
+      className="mb-8 flex flex-col gap-4 rounded border border-hairline bg-surface p-4 font-ui"
     >
-      <h2 className="text-lg font-semibold">Add a book</h2>
+      <h2 className="text-lg font-semibold text-ink">Add a book</h2>
 
       <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Title</span>
+        <span className="text-sm font-medium text-ink">Title</span>
         <input
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          className="rounded border px-3 py-2"
+          className="rounded border border-hairline bg-surface px-3 py-2 text-ink"
         />
       </label>
 
@@ -99,7 +99,9 @@ export default function AddBookForm() {
           onClick={() => setMode('text')}
           aria-pressed={mode === 'text'}
           className={`rounded px-3 py-1 text-sm ${
-            mode === 'text' ? 'bg-black text-white' : 'border'
+            mode === 'text'
+              ? 'bg-ink text-paper'
+              : 'border border-hairline bg-surface text-ink-muted'
           }`}
         >
           Paste text
@@ -109,7 +111,9 @@ export default function AddBookForm() {
           onClick={() => setMode('file')}
           aria-pressed={mode === 'file'}
           className={`rounded px-3 py-1 text-sm ${
-            mode === 'file' ? 'bg-black text-white' : 'border'
+            mode === 'file'
+              ? 'bg-ink text-paper'
+              : 'border border-hairline bg-surface text-ink-muted'
           }`}
         >
           Upload file
@@ -118,32 +122,32 @@ export default function AddBookForm() {
 
       {mode === 'text' ? (
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">Text</span>
+          <span className="text-sm font-medium text-ink">Text</span>
           <textarea
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
             rows={6}
-            className="rounded border px-3 py-2"
+            className="rounded border border-hairline bg-surface px-3 py-2 text-ink"
           />
         </label>
       ) : (
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">File</span>
+          <span className="text-sm font-medium text-ink">File</span>
           <input
             type="file"
             accept=".txt,.epub,.pdf"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="rounded border px-3 py-2"
+            className="rounded border border-hairline bg-surface px-3 py-2 text-ink"
           />
         </label>
       )}
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-error">{error}</p>}
 
       <button
         type="submit"
         disabled={submitting}
-        className="rounded bg-black px-3 py-2 text-white disabled:opacity-50"
+        className="rounded bg-ink px-3 py-2 text-paper disabled:opacity-50"
       >
         {submitting ? 'Adding…' : 'Add book'}
       </button>

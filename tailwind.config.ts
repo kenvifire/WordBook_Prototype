@@ -20,6 +20,19 @@ const config: Config = {
         ui: ['var(--font-figtree)', 'sans-serif'],
         reading: ['var(--font-source-serif)', 'serif'],
       },
+      keyframes: {
+        sweep: {
+          '0%': { backgroundPosition: '-100% 0' },
+          '100%': { backgroundPosition: '100% 0' },
+        },
+      },
+      animation: {
+        // Gated behind Tailwind's motion-safe: variant wherever it's used
+        // (a pure CSS media query, not a JS conditional) — the one
+        // deliberate motion moment in this redesign, answering "is this
+        // actually happening" for a pending generation.
+        sweep: 'sweep 1.6s ease-in-out infinite',
+      },
     },
   },
   plugins: [],
