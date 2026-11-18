@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import SpeakButton from '@/components/SpeakButton';
+import { getCachedDefinition, setCachedDefinition } from '@/lib/cache/clientWordCache';
 
 export default function WordPopup({
   word,
@@ -35,6 +36,7 @@ export default function WordPopup({
         return;
       }
       const data = (await res.json()) as { definition: string | null };
+      setCachedDefinition(`${language}:${word}`, data.definition);
       setDefinition(data.definition ?? 'No definition available.');
       if (add) {
         setAdded(true);
@@ -51,6 +53,16 @@ export default function WordPopup({
 
     // Already looked up this word for this popup instance — don't re-fetch.
     if (definition !== null || loading) return;
+
+    // Already looked up this word this session (possibly by a different
+    // popup instance for the same word) — use the cached result instead of
+    // re-fetching. A cached `null` means "looked up, genuinely no
+    // definition," which is distinct from "not cached yet" (`undefined`).
+    const cached = getCachedDefinition(`${language}:${word}`);
+    if (cached !== undefined) {
+      setDefinition(cached ?? 'No definition available.');
+      return;
+    }
 
     // I4: tapping the word is read-only — it shows the definition but must
     // not add the word to the SRS queue.
