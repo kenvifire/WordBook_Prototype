@@ -96,44 +96,46 @@ export default function WordPopup({
   }
 
   return (
-    <span className="relative inline-block">
+    <span className="relative inline-block font-ui">
       <span
         role="button"
         tabIndex={0}
         onClick={handleWordClick}
         onKeyDown={handleKeyDown}
-        className="cursor-pointer rounded px-0.5 hover:bg-yellow-100"
+        className={`cursor-pointer rounded px-0.5 hover:bg-hairline ${
+          open ? 'border-b border-practicing' : ''
+        }`}
       >
         {word}
       </span>
 
       {open && (
-        <span className="absolute left-0 top-full z-10 mt-1 flex w-60 flex-col gap-2 rounded border bg-white p-3 text-sm shadow-lg">
+        <span className="absolute left-0 top-full z-10 mt-1 flex w-60 flex-col gap-2 rounded border border-hairline bg-surface p-3 text-sm shadow-lg">
           <button
             type="button"
             onClick={handleClose}
             aria-label="Close"
-            className="self-end text-xs text-gray-500 hover:text-gray-800"
+            className="self-end text-xs text-ink-muted hover:text-ink"
           >
             ✕
           </button>
-          {loading && <span>Loading…</span>}
-          {error && <span className="text-red-600">{error}</span>}
+          {loading && <span className="text-ink-muted">Loading…</span>}
+          {error && <span className="text-error">{error}</span>}
           {!loading && !error && definition && (
             <>
-              <span className="flex items-center gap-2 font-semibold">
+              <span className="flex items-center gap-2 font-semibold text-ink">
                 {word}
                 <SpeakButton word={word} />
               </span>
-              <span>{definition}</span>
+              <span className="font-reading text-ink">{definition}</span>
               {added ? (
-                <span className="text-green-600">Added ✓</span>
+                <span className="text-unlocked">Added ✓</span>
               ) : (
                 <button
                   type="button"
                   onClick={handleAddClick}
                   disabled={adding}
-                  className="self-start rounded bg-black px-2 py-1 text-xs text-white disabled:opacity-50"
+                  className="self-start rounded bg-unlocked px-2 py-1 text-xs text-paper disabled:opacity-50"
                 >
                   {adding ? 'Adding…' : 'Add to my vocabulary'}
                 </button>
