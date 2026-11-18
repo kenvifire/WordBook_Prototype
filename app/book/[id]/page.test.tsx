@@ -137,6 +137,35 @@ describe('BookDetailPage', () => {
     expect(screen.queryByRole('button', { name: /^section reading$/i })).not.toBeInTheDocument();
   });
 
+  test("the sectioning setup screen's page-count and by-chapter buttons use the neutral pattern, not a progress color", async () => {
+    const db = createFakeFirestore(
+      {
+        userId: 'user-1',
+        title: 'My Book',
+        source: 'uploaded',
+        sectioningMethod: null,
+        detectedChapterBreaks: [0, 100],
+        language: 'en',
+      },
+      []
+    );
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const jsx = await BookDetailPage({ params: Promise.resolve({ id: 'book-1' }) });
+    render(jsx);
+
+    const byPage = screen.getByRole('button', { name: /section by page count/i });
+    const byChapter = screen.getByRole('button', { name: /section by chapter/i });
+
+    for (const button of [byPage, byChapter]) {
+      expect(button.className).not.toMatch(/bg-(locked|practicing|unlocked|error)\b/);
+    }
+    expect(byPage.className).toContain('bg-ink');
+    expect(byChapter.className).toContain('bg-surface');
+    expect(byChapter.className).toContain('border-hairline');
+  });
+
   test('the setup screen offers "by chapter" only when detectedChapterBreaks is non-null', async () => {
     const withChapters = createFakeFirestore(
       {
@@ -219,6 +248,34 @@ describe('BookDetailPage', () => {
     expect(screen.getByRole('button', { name: /^section reading$/i })).toBeInTheDocument();
     expect(screen.getByText('Section 1')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /set up/i })).not.toBeInTheDocument();
+  });
+
+  test('ReadingModeToggle gives the active mode bg-ink/text-paper and the inactive mode the neutral style', async () => {
+    const db = createFakeFirestore(
+      {
+        userId: 'user-1',
+        title: 'My Book',
+        source: 'uploaded',
+        sectioningMethod: 'by_page',
+        detectedChapterBreaks: null,
+        language: 'en',
+      },
+      [{ sectionNumber: 1, status: 'ready_to_practice' }]
+    );
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const jsx = await BookDetailPage({ params: Promise.resolve({ id: 'book-1' }) });
+    render(jsx);
+
+    // Section reading is the default active mode (see ReadingModeToggle's
+    // own initial state) — Free reading is the inactive one here.
+    expect(screen.getByRole('button', { name: /^section reading$/i }).className).toContain(
+      'bg-ink'
+    );
+    const freeButton = screen.getByRole('button', { name: /^free reading$/i });
+    expect(freeButton.className).toContain('bg-surface');
+    expect(freeButton.className).toContain('border-hairline');
   });
 
   test('a generated book (source: ai_generated) never shows the setup screen even with no prior visit', async () => {
