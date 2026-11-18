@@ -137,7 +137,7 @@ export default function BookshelfList({ books }: { books: BookshelfBook[] }) {
           })}
         </ul>
       ) : (
-        <p className="text-sm text-gray-600">No books in this language yet.</p>
+        <p className="text-sm text-ink-muted">No books in this language yet.</p>
       )}
     </div>
   );

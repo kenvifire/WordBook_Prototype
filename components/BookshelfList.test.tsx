@@ -103,4 +103,12 @@ describe('BookshelfList', () => {
     const sweep = screen.getByTestId('generating-sweep');
     expect(sweep.className).toMatch(/motion-safe:animate-/);
   });
+
+  test('the "no books in this language" empty state uses design tokens, not ad-hoc gray', () => {
+    render(<BookshelfList books={[]} />);
+
+    const emptyState = screen.getByText(/no books in this language/i);
+    expect(emptyState.className).toContain('text-ink-muted');
+    expect(emptyState.className).not.toContain('text-gray-600');
+  });
 });

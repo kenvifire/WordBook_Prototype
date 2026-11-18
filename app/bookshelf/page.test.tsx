@@ -358,4 +358,17 @@ describe('BookshelfPage', () => {
 
     expect(mockRedirect).toHaveBeenCalledWith('/login');
   });
+
+  test('a user with no books at all sees the empty state styled with design tokens, not ad-hoc gray', async () => {
+    const db = createFakeFirestore([], {});
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const jsx = await BookshelfPage();
+    render(jsx);
+
+    const emptyState = screen.getByText(/no books yet/i);
+    expect(emptyState.className).toContain('text-ink-muted');
+    expect(emptyState.className).not.toContain('text-gray-600');
+  });
 });
