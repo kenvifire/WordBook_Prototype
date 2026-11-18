@@ -24,14 +24,16 @@ service cloud.firestore {
 
     match /words/{wordId} {
       allow read, delete: if request.auth != null && request.auth.uid == resource.data.userId;
-      // The deterministic id scheme (`${uid}_${word}`) means `create` must
-      // also bind the document id to the authenticated user — otherwise an
-      // attacker who knows a victim's uid could create `words/{victimUid}_{word}`
-      // stamped with their own `userId`, squatting on the id the victim's
-      // own code would otherwise use for that word.
+      // The deterministic id scheme (`${uid}_${language}_${word}`) means
+      // `create` must also bind the document id to the authenticated user —
+      // otherwise an attacker who knows a victim's uid could create
+      // `words/{victimUid}_{language}_{word}` stamped with their own
+      // `userId`, squatting on the id the victim's own code would otherwise
+      // use for that word.
       allow create: if request.auth != null &&
         request.resource.data.userId == request.auth.uid &&
-        wordId == request.auth.uid + '_' + request.resource.data.word;
+        request.resource.data.language is string &&
+        wordId == request.auth.uid + '_' + request.resource.data.language + '_' + request.resource.data.word;
       // Immutability: an owner may update their own word (ratings, SM-2
       // state, definition backfill), but may not reassign it to another uid.
       allow update: if request.auth != null &&

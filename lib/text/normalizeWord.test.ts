@@ -20,4 +20,17 @@ describe('normalizeWord', () => {
     expect(normalizeWord("'")).toBe('');
     expect(normalizeWord('123')).toBe('');
   });
+
+  test('keeps accented letters', () => {
+    expect(normalizeWord('café')).toBe('café');
+    expect(normalizeWord('¡mañana!')).toBe('mañana');
+  });
+
+  test('normalizes composed and decomposed Unicode accents to the identical string', () => {
+    const composed = 'café'; // U+00E9, a single composed codepoint
+    const decomposed = 'café'; // 'e' + U+0301 combining acute accent
+    expect(composed).not.toBe(decomposed); // sanity check: genuinely different input strings
+    expect(normalizeWord(composed)).toBe(normalizeWord(decomposed));
+    expect(normalizeWord(decomposed)).toBe('café');
+  });
 });

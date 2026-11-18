@@ -3,11 +3,11 @@ import { render, screen } from '@testing-library/react';
 import { HeaderNav } from './HeaderNav';
 
 describe('HeaderNav', () => {
-  test('I3: links to Library, Review, and Settings are always rendered', () => {
+  test('renders a settings link and no Library/Review text links', () => {
     render(<HeaderNav />);
 
-    expect(screen.getByRole('link', { name: 'Library' })).toHaveAttribute('href', '/library');
-    expect(screen.getByRole('link', { name: 'Review' })).toHaveAttribute('href', '/review');
-    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings');
+    expect(screen.getByRole('link', { name: /settings/i })).toHaveAttribute('href', '/settings');
+    expect(screen.queryByRole('link', { name: /library/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: /review/i })).toBeNull();
   });
 });

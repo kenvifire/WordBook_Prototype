@@ -15,6 +15,14 @@ vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
 }));
 
+// Mocked so the "language fallback" test can inspect exactly what prop value
+// the page passed through, while every other test in this file still sees
+// the tapped word rendered as text (matching the real WordPopup's visible
+// output) for its own, unrelated assertions.
+vi.mock('@/components/WordPopup', () => ({
+  default: vi.fn(({ word }: { word: string; language: string }) => <span>{word}</span>),
+}));
+
 const { mockRedirect, mockNotFound } = vi.hoisted(() => ({
   mockRedirect: vi.fn((path: string) => {
     throw new Error(`NEXT_REDIRECT:${path}`);
@@ -31,10 +39,14 @@ vi.mock('next/navigation', () => ({
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuthedUser } from '@/lib/firebase/server';
+import { invalidatePrefix } from '@/lib/cache/serverCache';
+import { listSections } from '@/lib/sections/listSections';
+import WordPopup from '@/components/WordPopup';
 import ReadPage from './page';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
 const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
+const mockWordPopup = WordPopup as unknown as ReturnType<typeof vi.fn>;
 
 type StoredDoc = Record<string, unknown>;
 
@@ -79,18 +91,31 @@ function createFakeFirestore() {
     );
   }
 
-  function makeQuery(collectionPath: string, filters: { field: string; value: unknown }[], limitN?: number) {
+  function makeQuery(
+    collectionPath: string,
+    filters: { field: string; value: unknown }[],
+    orderField?: string,
+    limitN?: number
+  ) {
     return {
       where(field: string, _op: '==', value: unknown) {
-        return makeQuery(collectionPath, [...filters, { field, value }], limitN);
+        return makeQuery(collectionPath, [...filters, { field, value }], orderField, limitN);
+      },
+      orderBy(field: string) {
+        return makeQuery(collectionPath, filters, field, limitN);
       },
       limit(n: number) {
-        return makeQuery(collectionPath, filters, n);
+        return makeQuery(collectionPath, filters, orderField, n);
       },
       async get() {
         let matches = directChildren(collectionPath).filter(([, data]) =>
           filters.every((f) => data[f.field] === f.value)
         );
+        if (orderField) {
+          matches = [...matches].sort(
+            (a, b) => ((a[1][orderField] as number) ?? 0) - ((b[1][orderField] as number) ?? 0)
+          );
+        }
         if (limitN !== undefined) {
           matches = matches.slice(0, limitN);
         }
@@ -112,6 +137,9 @@ function createFakeFirestore() {
       },
       where(field: string, op: '==', value: unknown) {
         return makeQuery(path, [{ field, value }]);
+      },
+      orderBy(field: string) {
+        return makeQuery(path, [], field);
       },
     };
   }
@@ -142,6 +170,12 @@ beforeEach(() => {
   mockNotFound.mockClear();
   mockGetFirestore.mockReset();
   mockGetAuthedUser.mockReset();
+  mockWordPopup.mockClear();
+  // listSections' cache is module-level state shared across every test in
+  // this file — clear it so one test's cached section list never leaks
+  // into another's (same fix lib/books/listBooks.test.ts and
+  // lib/sections/listSections.test.ts needed for their own caches).
+  invalidatePrefix('sections:');
 });
 
 describe('ReadPage', () => {
@@ -199,6 +233,45 @@ describe('ReadPage', () => {
     expect(screen.getByText('gamma')).toBeInTheDocument();
     expect(screen.queryByText('alpha')).not.toBeInTheDocument();
     expect(screen.queryByText('delta')).not.toBeInTheDocument();
+  });
+
+  test('falls back to english for WordPopup when the book doc has no language field (pre-v3 books)', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    // Pre-v3 book doc: no `language` field at all.
+    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'ready_to_read',
+      text: 'beta',
+    });
+
+    const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+    render(jsx);
+
+    expect(mockWordPopup).toHaveBeenCalled();
+    const props = mockWordPopup.mock.calls[0][0];
+    expect(props).toMatchObject({ word: 'beta', language: 'english' });
+  });
+
+  test('I1: passes bookId and sectionId through to WordPopup so a reader-added word can be linked to this section', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'ready_to_read',
+      text: 'beta',
+    });
+
+    const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+    render(jsx);
+
+    expect(mockWordPopup).toHaveBeenCalled();
+    const props = mockWordPopup.mock.calls[0][0];
+    expect(props).toMatchObject({ bookId: 'book-1', sectionId: 'section-1' });
   });
 
   describe('prev/next navigation (I3)', () => {
@@ -366,6 +439,34 @@ describe('ReadPage', () => {
 
       const section = store.get('books/book-1/sections/section-1') as any;
       expect(section.status).toBe('completed');
+    });
+
+    test('invalidates the cached section list for that book, so the Book Detail page reflects completion on its next load', async () => {
+      const { db, store } = createFakeFirestore();
+      mockGetFirestore.mockReturnValue(db);
+      putBook(store, 'book-1', { userId: 'user-1', title: 'My Book' });
+      putSection(store, 'book-1', 'section-1', {
+        sectionNumber: 1,
+        status: 'ready_to_read',
+        text: makeSectionText(5),
+      });
+
+      mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+      // Warm the Book Detail page's section-list cache with the
+      // pre-completion status.
+      const before = await listSections('book-1');
+      expect(before.find((s) => s.id === 'section-1')?.status).toBe('ready_to_read');
+
+      const jsx = await ReadPage({ params: Promise.resolve({ id: 'book-1', sectionNumber: '1' }) });
+      const markSectionComplete = extractMarkSectionCompleteAction(jsx);
+
+      await expect(markSectionComplete()).rejects.toThrow('NEXT_REDIRECT:/book/book-1');
+
+      // The next listSections call reflects the completion, not the stale
+      // cached value from before markSectionComplete ran.
+      const after = await listSections('book-1');
+      expect(after.find((s) => s.id === 'section-1')?.status).toBe('completed');
     });
   });
 });

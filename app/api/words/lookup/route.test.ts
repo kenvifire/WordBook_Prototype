@@ -11,19 +11,26 @@ vi.mock('@/lib/firebase/server', () => ({
   getAuthedUser: vi.fn(),
 }));
 
-vi.mock('@/lib/dictionary/dictionaryApi', () => ({
-  fetchDefinition: vi.fn(),
+vi.mock('@/lib/translate/translateApi', () => ({
+  translateWord: vi.fn(),
+}));
+
+vi.mock('@/lib/users/userProfile', () => ({
+  getUserProfile: vi.fn(),
 }));
 
 import { NextRequest } from 'next/server';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuthedUser } from '@/lib/firebase/server';
-import { fetchDefinition } from '@/lib/dictionary/dictionaryApi';
+import { translateWord } from '@/lib/translate/translateApi';
+import { getUserProfile } from '@/lib/users/userProfile';
+import { buildWordId } from '@/lib/firebase/wordId';
 import { POST } from './route';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
 const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
-const mockFetchDefinition = fetchDefinition as unknown as ReturnType<typeof vi.fn>;
+const mockTranslateWord = translateWord as unknown as ReturnType<typeof vi.fn>;
+const mockGetUserProfile = getUserProfile as unknown as ReturnType<typeof vi.fn>;
 
 type StoredDoc = Record<string, unknown>;
 
@@ -109,7 +116,14 @@ function makeRequest(body: unknown) {
 beforeEach(() => {
   mockGetFirestore.mockReset();
   mockGetAuthedUser.mockReset();
-  mockFetchDefinition.mockReset();
+  mockTranslateWord.mockReset();
+  mockGetUserProfile.mockReset();
+  mockGetUserProfile.mockResolvedValue({
+    nativeLanguage: null,
+    avatarUrl: null,
+    theme: 'system',
+    recognitionThreshold: 0.8,
+  });
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 });
@@ -127,7 +141,7 @@ describe('POST /api/words/lookup', () => {
     const response = await POST(makeRequest({ word: 'ephemeral' }));
 
     expect(response.status).toBe(401);
-    expect(mockFetchDefinition).not.toHaveBeenCalled();
+    expect(mockTranslateWord).not.toHaveBeenCalled();
   });
 
   test('returns 400 when the word is missing or has no letters', async () => {
@@ -135,44 +149,71 @@ describe('POST /api/words/lookup', () => {
     const { db } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
 
-    const response = await POST(makeRequest({ word: '  123  ' }));
+    const response = await POST(makeRequest({ word: '  123  ', language: 'english' }));
 
     expect(response.status).toBe(400);
-    expect(mockFetchDefinition).not.toHaveBeenCalled();
+    expect(mockTranslateWord).not.toHaveBeenCalled();
+  });
+
+  test('returns 400 when language is missing or not a string', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    const response = await POST(makeRequest({ word: 'ephemeral' }));
+
+    expect(response.status).toBe(400);
+    expect(mockTranslateWord).not.toHaveBeenCalled();
+  });
+
+  test('returns 400 when language contains a slash, rather than interpolating it unchecked into the Firestore doc id', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    const response = await POST(makeRequest({ word: 'ephemeral', language: 'a/b' }));
+
+    expect(response.status).toBe(400);
+    expect(mockTranslateWord).not.toHaveBeenCalled();
+    // Nothing should have been written anywhere, under any id shape.
+    expect(store.size).toBe(0);
   });
 
   test('a plain lookup (no add flag) never creates a word doc, even for a brand-new word', async () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('lasting a short time');
+    mockTranslateWord.mockResolvedValue('lasting a short time');
 
-    const response = await POST(makeRequest({ word: 'Ephemeral,' }));
+    const response = await POST(makeRequest({ word: 'Ephemeral,', language: 'english' }));
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mockFetchDefinition).toHaveBeenCalledWith('ephemeral');
+    expect(mockTranslateWord).toHaveBeenCalledWith('ephemeral', 'english', null);
     expect(body).toEqual({ word: 'ephemeral', definition: 'lasting a short time' });
-    expect(getWord(store, 'user-1_ephemeral')).toBeUndefined();
+    expect(getWord(store, buildWordId('user-1', 'english', 'ephemeral'))).toBeUndefined();
   });
 
   test('add: true creates a new word doc with SM-2 defaults and no bookId/sectionRefs', async () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('lasting a short time');
+    mockTranslateWord.mockResolvedValue('lasting a short time');
 
-    const response = await POST(makeRequest({ word: 'Ephemeral,', add: true }));
+    const response = await POST(
+      makeRequest({ word: 'Ephemeral,', add: true, language: 'english' })
+    );
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mockFetchDefinition).toHaveBeenCalledWith('ephemeral');
+    expect(mockTranslateWord).toHaveBeenCalledWith('ephemeral', 'english', null);
     expect(body).toEqual({ word: 'ephemeral', definition: 'lasting a short time' });
 
-    const stored = getWord(store, 'user-1_ephemeral');
+    const stored = getWord(store, buildWordId('user-1', 'english', 'ephemeral'));
     expect(stored).toMatchObject({
       userId: 'user-1',
       word: 'ephemeral',
+      language: 'english',
       definition: 'lasting a short time',
       sectionRefs: [],
       repetitions: 0,
@@ -187,13 +228,74 @@ describe('POST /api/words/lookup', () => {
     expect(stored.bookId).toBeUndefined();
   });
 
+  test('I1: add: true with bookId/sectionId links the new word to that section instead of leaving sectionRefs empty', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockTranslateWord.mockResolvedValue('lasting a short time');
+
+    const response = await POST(
+      makeRequest({
+        word: 'Ephemeral,',
+        add: true,
+        language: 'english',
+        bookId: 'book-1',
+        sectionId: 'section-1',
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ word: 'ephemeral', definition: 'lasting a short time' });
+
+    const stored = getWord(store, buildWordId('user-1', 'english', 'ephemeral'));
+    expect(stored).toMatchObject({
+      sectionRefs: [{ bookId: 'book-1', sectionId: 'section-1' }],
+      addedFromReader: true,
+    });
+  });
+
+  test('I1: add: true without bookId/sectionId still creates the word with empty sectionRefs (no 400)', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockTranslateWord.mockResolvedValue('lasting a short time');
+
+    const response = await POST(
+      makeRequest({ word: 'ephemeral', add: true, language: 'english' })
+    );
+
+    expect(response.status).toBe(200);
+    const stored = getWord(store, buildWordId('user-1', 'english', 'ephemeral'));
+    expect(stored).toMatchObject({ sectionRefs: [] });
+  });
+
+  test('lookup builds the wordId using the given language', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockTranslateWord.mockResolvedValue('a cat');
+
+    const response = await POST(makeRequest({ word: 'chat', add: true, language: 'french' }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ word: 'chat', definition: 'a cat' });
+    expect(getWord(store, buildWordId('user-1', 'french', 'chat'))).toMatchObject({
+      userId: 'user-1',
+      word: 'chat',
+      language: 'french',
+    });
+  });
+
   test('a word the user already has returns its existing definition without re-fetching or overwriting', async () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    putWord(store, 'user-1_lucid', {
+    putWord(store, buildWordId('user-1', 'english', 'lucid'), {
       userId: 'user-1',
       word: 'lucid',
+      language: 'english',
       definition: 'clear and easy to understand',
       sectionRefs: [{ bookId: 'book-1', sectionId: 'section-1' }],
       repetitions: 3,
@@ -203,13 +305,13 @@ describe('POST /api/words/lookup', () => {
       lastRating: 'good',
     });
 
-    const response = await POST(makeRequest({ word: 'lucid' }));
+    const response = await POST(makeRequest({ word: 'lucid', language: 'english' }));
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mockFetchDefinition).not.toHaveBeenCalled();
+    expect(mockTranslateWord).not.toHaveBeenCalled();
     expect(body).toEqual({ word: 'lucid', definition: 'clear and easy to understand' });
-    expect(getWord(store, 'user-1_lucid')).toMatchObject({
+    expect(getWord(store, buildWordId('user-1', 'english', 'lucid'))).toMatchObject({
       repetitions: 3,
       easeFactor: 2.8,
       intervalDays: 15,
@@ -220,9 +322,10 @@ describe('POST /api/words/lookup', () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    putWord(store, 'user-1_zzzqaa', {
+    putWord(store, buildWordId('user-1', 'english', 'zzzqaa'), {
       userId: 'user-1',
       word: 'zzzqaa',
+      language: 'english',
       definition: null,
       sectionRefs: [{ bookId: 'book-1', sectionId: 'section-1' }],
       repetitions: 4,
@@ -232,15 +335,15 @@ describe('POST /api/words/lookup', () => {
       lastRating: 'easy',
       addedFromReader: false,
     });
-    mockFetchDefinition.mockResolvedValue('a definition at last');
+    mockTranslateWord.mockResolvedValue('a definition at last');
 
-    const response = await POST(makeRequest({ word: 'zzzqaa' }));
+    const response = await POST(makeRequest({ word: 'zzzqaa', language: 'english' }));
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mockFetchDefinition).toHaveBeenCalledWith('zzzqaa');
+    expect(mockTranslateWord).toHaveBeenCalledWith('zzzqaa', 'english', null);
     expect(body).toEqual({ word: 'zzzqaa', definition: 'a definition at last' });
-    expect(getWord(store, 'user-1_zzzqaa')).toMatchObject({
+    expect(getWord(store, buildWordId('user-1', 'english', 'zzzqaa'))).toMatchObject({
       definition: 'a definition at last',
       repetitions: 4,
       easeFactor: 2.9,
@@ -256,9 +359,10 @@ describe('POST /api/words/lookup', () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    putWord(store, 'user-1_zzzqbb', {
+    putWord(store, buildWordId('user-1', 'english', 'zzzqbb'), {
       userId: 'user-1',
       word: 'zzzqbb',
+      language: 'english',
       definition: null,
       sectionRefs: [],
       repetitions: 0,
@@ -267,25 +371,27 @@ describe('POST /api/words/lookup', () => {
       nextReviewDate: '2026-01-01',
       lastRating: null,
     });
-    mockFetchDefinition.mockResolvedValue(null);
+    mockTranslateWord.mockResolvedValue(null);
 
-    const response = await POST(makeRequest({ word: 'zzzqbb' }));
+    const response = await POST(makeRequest({ word: 'zzzqbb', language: 'english' }));
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ word: 'zzzqbb', definition: null });
-    expect(getWord(store, 'user-1_zzzqbb')).toMatchObject({ definition: null });
+    expect(getWord(store, buildWordId('user-1', 'english', 'zzzqbb'))).toMatchObject({
+      definition: null,
+    });
   });
 
   test("two concurrent add:true calls for the same new word result in one document; the loser transparently gets the winner's data instead of a 500", async () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     const { db, store, createCallCount } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
-    mockFetchDefinition.mockResolvedValue('lasting a short time');
+    mockTranslateWord.mockResolvedValue('lasting a short time');
 
     const [firstResponse, secondResponse] = await Promise.all([
-      POST(makeRequest({ word: 'ephemeral', add: true })),
-      POST(makeRequest({ word: 'ephemeral', add: true })),
+      POST(makeRequest({ word: 'ephemeral', add: true, language: 'english' })),
+      POST(makeRequest({ word: 'ephemeral', add: true, language: 'english' })),
     ]);
 
     expect(firstResponse.status).toBe(200);
@@ -300,8 +406,9 @@ describe('POST /api/words/lookup', () => {
     // Only one document ever landed, and both create() attempts were made
     // (proving the loser actually hit the race rather than short-circuiting
     // some other way).
-    expect(createCallCount.get('words/user-1_ephemeral')).toBe(2);
-    expect(getWord(store, 'user-1_ephemeral')).toMatchObject({
+    const wordId = buildWordId('user-1', 'english', 'ephemeral');
+    expect(createCallCount.get(`words/${wordId}`)).toBe(2);
+    expect(getWord(store, wordId)).toMatchObject({
       userId: 'user-1',
       word: 'ephemeral',
       definition: 'lasting a short time',
@@ -318,9 +425,10 @@ describe('POST /api/words/lookup', () => {
     // words/{victimUid}_{word} stamped with their own userId — exactly the
     // squatting attack the Firestore rules fix closes off at the write
     // path. This test guards the read path as well.
-    putWord(store, 'victim-uid_ephemeral', {
+    putWord(store, buildWordId('victim-uid', 'english', 'ephemeral'), {
       userId: 'attacker-uid',
       word: 'ephemeral',
+      language: 'english',
       definition: 'an attacker-controlled definition',
       sectionRefs: [],
       repetitions: 0,
@@ -330,12 +438,12 @@ describe('POST /api/words/lookup', () => {
       lastRating: null,
     });
 
-    const response = await POST(makeRequest({ word: 'ephemeral' }));
+    const response = await POST(makeRequest({ word: 'ephemeral', language: 'english' }));
 
     expect(response.status).toBe(500);
     const body = await response.json();
     expect(body).not.toMatchObject({ definition: 'an attacker-controlled definition' });
-    expect(mockFetchDefinition).not.toHaveBeenCalled();
+    expect(mockTranslateWord).not.toHaveBeenCalled();
   });
 
   test('a non-race error from create() surfaces as a 500', async () => {
@@ -359,10 +467,53 @@ describe('POST /api/words/lookup', () => {
       },
     };
     mockGetFirestore.mockReturnValue(failingDb);
-    mockFetchDefinition.mockResolvedValue('lasting a short time');
+    mockTranslateWord.mockResolvedValue('lasting a short time');
 
-    const response = await POST(makeRequest({ word: 'ephemeral', add: true }));
+    const response = await POST(makeRequest({ word: 'ephemeral', add: true, language: 'english' }));
 
     expect(response.status).toBe(500);
+  });
+
+  test('Fix 2: a non-English book with nativeLanguage null stores definition: null, and a second lookup does not overwrite it with a wrong guess', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGetUserProfile.mockResolvedValue({
+      nativeLanguage: null,
+      avatarUrl: null,
+      theme: 'system',
+      recognitionThreshold: 0.8,
+    });
+    // translateWord itself resolves to null without a network call when
+    // targetLanguage is null (see lib/translate/translateApi.ts) — mocked
+    // here as null to match that real contract exactly.
+    mockTranslateWord.mockResolvedValue(null);
+
+    const first = await POST(makeRequest({ word: 'mot', add: true, language: 'french' }));
+    const firstBody = await first.json();
+
+    expect(first.status).toBe(200);
+    expect(mockTranslateWord).toHaveBeenCalledWith('mot', 'french', null);
+    expect(firstBody).toEqual({ word: 'mot', definition: null });
+    expect(getWord(store, buildWordId('user-1', 'french', 'mot'))).toMatchObject({
+      definition: null,
+    });
+
+    mockTranslateWord.mockClear();
+
+    // Second lookup of the same already-existing word: a stored null here
+    // is the NORMAL value (no nativeLanguage set), not a past failure to
+    // retry — it must not be clobbered with a wrong-but-plausible guess.
+    const second = await POST(makeRequest({ word: 'mot', language: 'french' }));
+    const secondBody = await second.json();
+
+    expect(second.status).toBe(200);
+    expect(secondBody).toEqual({ word: 'mot', definition: null });
+    // Fix 2's whole point: translateWord (never the removed fetchDefinition)
+    // is what gets called, and it's called with the correct null-safe args.
+    expect(mockTranslateWord).toHaveBeenCalledWith('mot', 'french', null);
+    expect(getWord(store, buildWordId('user-1', 'french', 'mot'))).toMatchObject({
+      definition: null,
+    });
   });
 });

@@ -17,6 +17,10 @@ vi.mock('@/lib/epub/parseEpub', () => ({
   parseEpub: vi.fn(),
 }));
 
+vi.mock('@/lib/pdf/parsePdf', () => ({
+  parsePdf: vi.fn(),
+}));
+
 vi.mock('@/lib/books/bookService', () => ({
   addBook: vi.fn(),
 }));
@@ -25,12 +29,14 @@ import { NextRequest } from 'next/server';
 import { getAuthedUser } from '@/lib/firebase/server';
 import { getStorage } from 'firebase-admin/storage';
 import { parseEpub } from '@/lib/epub/parseEpub';
+import { parsePdf } from '@/lib/pdf/parsePdf';
 import { addBook } from '@/lib/books/bookService';
 import { POST } from './route';
 
 const mockGetAuthedUser = getAuthedUser as unknown as ReturnType<typeof vi.fn>;
 const mockGetStorage = getStorage as unknown as ReturnType<typeof vi.fn>;
 const mockParseEpub = parseEpub as unknown as ReturnType<typeof vi.fn>;
+const mockParsePdf = parsePdf as unknown as ReturnType<typeof vi.fn>;
 const mockAddBook = addBook as unknown as ReturnType<typeof vi.fn>;
 
 function makeStorageMock(save: ReturnType<typeof vi.fn>) {
@@ -50,6 +56,7 @@ beforeEach(() => {
   mockGetAuthedUser.mockReset();
   mockGetStorage.mockReset();
   mockParseEpub.mockReset();
+  mockParsePdf.mockReset();
   mockAddBook.mockReset();
 });
 
@@ -205,6 +212,94 @@ describe('POST /api/books', () => {
 
     expect(response.status).toBe(400);
     expect(body).toEqual({ error: 'title and rawText are required' });
+    expect(mockAddBook).not.toHaveBeenCalled();
+  });
+
+  test('upload route accepts a .pdf file and routes it to parsePdf', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    mockParsePdf.mockResolvedValue({
+      text: 'flattened pdf text',
+      pageTexts: ['flattened pdf text'],
+      outline: ['Chapter One', 'Chapter Two'],
+    });
+    mockAddBook.mockResolvedValue({ bookId: 'book-789' });
+
+    const formData = new FormData();
+    formData.set('title', 'My PDF Book');
+    const file = new File(['fake pdf bytes'], 'book.pdf', { type: 'application/pdf' });
+    formData.set('file', file);
+
+    const response = await POST(makeRequest(formData));
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body).toEqual({ bookId: 'book-789' });
+    expect(mockParsePdf).toHaveBeenCalledTimes(1);
+    const bufferArg = mockParsePdf.mock.calls[0][0];
+    expect(Buffer.isBuffer(bufferArg)).toBe(true);
+    expect(mockAddBook).toHaveBeenCalledWith({
+      title: 'My PDF Book',
+      author: undefined,
+      format: 'pdf',
+      rawText: 'flattened pdf text',
+      userId: 'user-1',
+      chapterTitles: ['Chapter One', 'Chapter Two'],
+    });
+    expect(mockParseEpub).not.toHaveBeenCalled();
+  });
+
+  // Minor #6: the .pdf branch previously took `title` straight from the
+  // form with no fallback, so an empty/missing title field saved the book
+  // with an empty title. Mirror the filename-derived fallback: when the
+  // title field is empty, fall back to the uploaded file's name with its
+  // extension stripped.
+  test('upload route falls back to the filename (minus extension) when the .pdf title field is empty', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    mockParsePdf.mockResolvedValue({
+      text: 'flattened pdf text',
+      pageTexts: ['flattened pdf text'],
+      outline: null,
+    });
+    mockAddBook.mockResolvedValue({ bookId: 'book-999' });
+
+    const formData = new FormData();
+    formData.set('title', '');
+    const file = new File(['fake pdf bytes'], 'my-great-novel.pdf', { type: 'application/pdf' });
+    formData.set('file', file);
+
+    const response = await POST(makeRequest(formData));
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body).toEqual({ bookId: 'book-999' });
+    expect(mockAddBook).toHaveBeenCalledWith({
+      title: 'my-great-novel',
+      author: undefined,
+      format: 'pdf',
+      rawText: 'flattened pdf text',
+      userId: 'user-1',
+      chapterTitles: undefined,
+    });
+  });
+
+  test('upload route rejects a .pdf with no extractable text with a 400 and clear message', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    mockParsePdf.mockRejectedValue(
+      new Error('Could not extract text from this PDF — it may be a scanned, image-only document')
+    );
+
+    const formData = new FormData();
+    formData.set('title', 'My PDF Book');
+    const file = new File(['fake pdf bytes'], 'scanned.pdf', { type: 'application/pdf' });
+    formData.set('file', file);
+
+    const response = await POST(makeRequest(formData));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({
+      error: 'Could not extract text from this PDF — it may be a scanned, image-only document',
+    });
     expect(mockAddBook).not.toHaveBeenCalled();
   });
 

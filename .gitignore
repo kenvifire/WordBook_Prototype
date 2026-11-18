@@ -10,3 +10,6 @@ node_modules
 # TypeScript / Next.js generated files
 *.tsbuildinfo
 next-env.d.ts
+
+# visual brainstorming companion scratch files
+.superpowers/

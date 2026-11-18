@@ -27,17 +27,28 @@ function stripClitic(word: string): string {
   return word;
 }
 
-// Cleans a single raw token already matched by /[a-zA-Z']+/: lowercases it,
+// The one definition of a token character, shared by extractVocabulary and
+// normalizeWord so they can never tokenize the same text differently. Letters
+// (any script), combining marks (so decomposed accents like e + U+0301 stay in
+// one token), and the straight apostrophe. Use with the 'u' flag.
+export const TOKEN_PATTERN_SOURCE = "[\\p{L}\\p{M}']+";
+
+// Cleans a single raw token already matched by TOKEN_PATTERN_SOURCE: lowercases it,
 // strips leading/trailing quote marks (e.g. the opening/closing quote of a
 // quoted sentence sticking to the first/last word), and strips a trailing
 // clitic so "don't" -> "do", "John's" -> "john", "he'll" -> "he". Returns ''
 // when nothing with a letter is left (e.g. a bare "'" from a quotation mark).
 export function normalizeToken(raw: string): string {
-  let word = normalizeQuotes(raw).toLowerCase();
+  // Collapse composed vs. decomposed Unicode accents (e.g. "café" as a
+  // single U+00E9 vs. "e" + combining U+0301) to the same NFC form first, so
+  // the two spellings of the same real word always normalize to the exact
+  // same string — otherwise they'd dedupe into two separate word docs under
+  // this app's deterministic per-user word-ID scheme.
+  let word = normalizeQuotes(raw).normalize('NFC').toLowerCase();
   word = word.replace(/^'+/, '').replace(/'+$/, '');
   word = stripClitic(word);
   word = word.replace(/'+$/, '');
-  if (!/[a-z]/.test(word)) return '';
+  if (!/\p{L}/u.test(word)) return '';
   return word;
 }
 
@@ -45,6 +56,6 @@ export function normalizeToken(raw: string): string {
 // reader's tap-to-define, which passes in a single word straight off the
 // page) the same way extractVocabulary tokenizes section text.
 export function normalizeWord(raw: string): string {
-  const match = normalizeQuotes(raw).match(/[a-zA-Z']+/);
+  const match = normalizeQuotes(raw).match(new RegExp(TOKEN_PATTERN_SOURCE, 'u'));
   return match ? normalizeToken(match[0]) : '';
 }

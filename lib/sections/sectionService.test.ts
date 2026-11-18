@@ -7,6 +7,7 @@ vi.mock('firebase-admin/firestore', () => ({
 vi.mock('@/lib/firebase/admin', () => ({ getAdminApp: vi.fn(() => ({})) }));
 
 import { getFirestore } from 'firebase-admin/firestore';
+import { invalidatePrefix } from '@/lib/cache/serverCache';
 import { computeRecognitionRate, maybeUnlockNextSection } from './sectionService';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
@@ -110,6 +111,14 @@ function putSection(
   store.set(`books/${bookId}/sections/${sectionId}`, { ...data });
 }
 
+function putBook(store: Map<string, StoredDoc>, bookId: string, data: StoredDoc) {
+  store.set(`books/${bookId}`, { ...data });
+}
+
+function putUser(store: Map<string, StoredDoc>, userId: string, data: StoredDoc) {
+  store.set(`users/${userId}`, { ...data });
+}
+
 function putWord(store: Map<string, StoredDoc>, wordId: string, data: StoredDoc) {
   store.set(`words/${wordId}`, { ...data });
 }
@@ -120,6 +129,9 @@ function getSection(store: Map<string, StoredDoc>, bookId: string, sectionId: st
 
 beforeEach(() => {
   mockGetFirestore.mockReset();
+  // getUserProfile (called by maybeUnlockNextSection) now caches by uid;
+  // clear it so one test's cached profile never leaks into another's.
+  invalidatePrefix('profile:');
 });
 
 describe('computeRecognitionRate', () => {
@@ -150,6 +162,7 @@ describe('maybeUnlockNextSection', () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
 
+    putBook(store, 'book-1', { userId: 'u1' });
     putSection(store, 'book-1', 'section-1', {
       sectionNumber: 1,
       status: 'ready_to_practice',
@@ -172,6 +185,7 @@ describe('maybeUnlockNextSection', () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
 
+    putBook(store, 'book-1', { userId: 'u1' });
     putSection(store, 'book-1', 'section-1', {
       sectionNumber: 1,
       status: 'ready_to_practice',
@@ -220,6 +234,7 @@ describe('maybeUnlockNextSection', () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
 
+    putBook(store, 'book-1', { userId: 'u1' });
     putSection(store, 'book-1', 'section-1', {
       sectionNumber: 1,
       status: 'ready_to_practice',
@@ -275,6 +290,7 @@ describe('maybeUnlockNextSection', () => {
     const { db, store } = createFakeFirestore();
     mockGetFirestore.mockReturnValue(db);
 
+    putBook(store, 'book-1', { userId: 'u1' });
     putSection(store, 'book-1', 'section-1', {
       sectionNumber: 1,
       status: 'ready_to_practice',
@@ -285,5 +301,50 @@ describe('maybeUnlockNextSection', () => {
     await expect(maybeUnlockNextSection('book-1', 'section-1')).resolves.toBeUndefined();
 
     expect(getSection(store, 'book-1', 'section-1').status).toBe('ready_to_read');
+  });
+
+  test('a user with a custom 100% threshold stays locked at 90% recognition', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    putBook(store, 'book1', { userId: 'u1' });
+    putUser(store, 'u1', { recognitionThreshold: 1.0 });
+    putSection(store, 'book1', 'section1', {
+      sectionNumber: 1,
+      status: 'ready_to_practice',
+      wordIds: ['w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w7', 'w8', 'w9', 'w10'],
+    });
+    putSection(store, 'book1', 'section2', { sectionNumber: 2, status: 'locked', wordIds: [] });
+    for (let i = 1; i <= 9; i++) {
+      putWord(store, `w${i}`, { lastRating: 'good' });
+    }
+    putWord(store, 'w10', { lastRating: 'again' });
+
+    await maybeUnlockNextSection('book1', 'section1');
+
+    expect(getSection(store, 'book1', 'section1').status).toBe('ready_to_practice');
+    expect(getSection(store, 'book1', 'section2').status).toBe('locked');
+  });
+
+  test('a user with no profile doc still unlocks at the 80% default', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    putBook(store, 'book2', { userId: 'u2' });
+    // No users/u2 doc at all.
+    putSection(store, 'book2', 'section2', {
+      sectionNumber: 2,
+      status: 'ready_to_practice',
+      wordIds: ['w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w7', 'w8', 'w9', 'w10'],
+    });
+    for (let i = 1; i <= 8; i++) {
+      putWord(store, `w${i}`, { lastRating: 'good' });
+    }
+    putWord(store, 'w9', { lastRating: 'again' });
+    putWord(store, 'w10', { lastRating: 'again' });
+
+    await maybeUnlockNextSection('book2', 'section2');
+
+    expect(getSection(store, 'book2', 'section2').status).toBe('ready_to_read');
   });
 });

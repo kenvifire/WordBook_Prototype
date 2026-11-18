@@ -1,10 +1,10 @@
 import commonWordsList from './commonWords.json';
-import { normalizeQuotes, normalizeToken } from './normalizeWord';
+import { normalizeQuotes, normalizeToken, TOKEN_PATTERN_SOURCE } from './normalizeWord';
 
 const COMMON_WORDS = new Set<string>(commonWordsList);
 
 export function extractVocabulary(sectionText: string): string[] {
-  const tokens = normalizeQuotes(sectionText).match(/[a-zA-Z']+/g) ?? [];
+  const tokens = normalizeQuotes(sectionText).match(new RegExp(TOKEN_PATTERN_SOURCE, 'gu')) ?? [];
   const seen = new Set<string>();
   const result: string[] = [];
   for (const raw of tokens) {

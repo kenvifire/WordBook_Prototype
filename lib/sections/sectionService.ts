@@ -1,11 +1,11 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
+import { getUserProfile } from '@/lib/users/userProfile';
+import { invalidate } from '@/lib/cache/serverCache';
 
 export type WordForRecognition = {
   lastRating: string | null;
 };
-
-const UNLOCK_THRESHOLD = 0.8;
 
 export function computeRecognitionRate(words: WordForRecognition[]): number {
   // Review Focus #5: a section with zero vocabulary words (e.g. every word in
@@ -21,6 +21,20 @@ export function computeRecognitionRate(words: WordForRecognition[]): number {
 }
 
 export async function maybeUnlockNextSection(bookId: string, sectionId: string): Promise<void> {
+  // listSections caches this book's section list — invalidate it
+  // unconditionally whenever this function returns (via `finally`), even on
+  // an early-return path that changed nothing. An unnecessary invalidation
+  // is harmless; the alternative (invalidating only on the branches that
+  // actually wrote something) risks missing one. See
+  // lib/sections/listSections.ts.
+  try {
+    await maybeUnlockNextSectionInner(bookId, sectionId);
+  } finally {
+    invalidate(`sections:${bookId}`);
+  }
+}
+
+async function maybeUnlockNextSectionInner(bookId: string, sectionId: string): Promise<void> {
   const db = getFirestore(getAdminApp());
   const sectionRef = db.collection('books').doc(bookId).collection('sections').doc(sectionId);
 
@@ -50,6 +64,13 @@ export async function maybeUnlockNextSection(bookId: string, sectionId: string):
     return;
   }
 
+  const bookSnap = await db.collection('books').doc(bookId).get();
+  if (!bookSnap.exists) {
+    throw new Error('Failed to load book: no document found');
+  }
+  const { userId } = bookSnap.data() as { userId: string };
+  const { recognitionThreshold } = await getUserProfile(userId);
+
   let wordRows: { lastRating: string | null }[] = [];
   if (wordIds.length > 0) {
     const wordsCollection = db.collection('words');
@@ -64,11 +85,15 @@ export async function maybeUnlockNextSection(bookId: string, sectionId: string):
 
   const rate = computeRecognitionRate(wordRows);
 
-  if (rate < UNLOCK_THRESHOLD) {
+  if (rate < recognitionThreshold) {
     return;
   }
 
   await sectionRef.update({ status: 'ready_to_read' });
+
+  // The Bookshelf's cached book list (lib/books/listBooks.ts) includes each
+  // book's "N of M sections unlocked" count, which this write just changed.
+  invalidate(`books:${userId}`);
 
   const nextSectionQuery = await db
     .collection('books')

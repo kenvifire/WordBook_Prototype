@@ -4,11 +4,13 @@ import { revalidatePath } from 'next/cache';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAdminApp } from '@/lib/firebase/admin';
 import { getAuthedUser } from '@/lib/firebase/server';
+import { invalidate } from '@/lib/cache/serverCache';
 import WordPopup from '@/components/WordPopup';
 
 type BookData = {
   userId: string;
   title: string;
+  language: string;
 };
 
 type SectionData = {
@@ -125,6 +127,12 @@ export default async function ReadPage({
       .doc(sectionId)
       .update({ status: 'completed' });
 
+    // The Book Detail page's section list is cached per-bookId (see
+    // lib/sections/listSections.ts) — invalidate it right after the write
+    // above so the completed status is visible on the very next load
+    // (the redirect below) rather than a stale cached value for up to 15s.
+    invalidate(`sections:${id}`);
+
     revalidatePath(`/book/${id}`);
     redirect(`/book/${id}`);
   }
@@ -138,7 +146,17 @@ export default async function ReadPage({
       <p className="leading-loose">
         {sectionWords.map((word, index) => (
           <span key={index}>
-            <WordPopup word={word} />{' '}
+            {/* Pre-v3 book docs have no `language` field at all (undefined at
+                runtime despite the required-string type above) — fall back to
+                the same temporary English default used at book-ingestion time
+                in app/api/books/route.ts, rather than sending `language:
+                undefined` and having the lookup route 400. */}
+            <WordPopup
+              word={word}
+              language={bookData.language ?? 'english'}
+              bookId={id}
+              sectionId={sectionId}
+            />{' '}
           </span>
         ))}
       </p>

@@ -9,6 +9,7 @@ export type ParsedEpub = {
   title: string;
   author: string | null;
   text: string;
+  chapterTitles: string[] | null;
 };
 
 function stripTags(html: string): string {
@@ -61,10 +62,23 @@ export async function parseEpub(buffer: Buffer): Promise<ParsedEpub> {
       .replace(/\s+/g, ' ')
       .trim();
 
+    // epub.toc exposes the TOC's chapter titles in this library version
+    // (epub.flow carries only ids/hrefs per spine item, no titles). Used by
+    // detectChapterBreaksFromTitles to prefer a known TOC over the plain
+    // heading-scan fallback.
+    const chapterTitleList = (epub.toc ?? [])
+      .map((entry: TocElement) => entry.title)
+      .filter(
+        (title: string | undefined): title is string =>
+          typeof title === 'string' && title.length > 0
+      );
+    const chapterTitles = chapterTitleList.length > 0 ? chapterTitleList : null;
+
     return {
       title: epub.metadata.title ?? 'Untitled',
       author: epub.metadata.creator ?? null,
       text,
+      chapterTitles,
     };
   } catch (err) {
     throw new Error('Could not parse EPUB file', { cause: err });

@@ -34,7 +34,7 @@ export default function LoginPage() {
         throw new Error('Failed to establish session');
       }
 
-      router.push('/library');
+      router.push('/bookshelf');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to log in');
     } finally {
