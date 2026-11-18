@@ -69,6 +69,34 @@ describe('StatisticsPage', () => {
     expect(screen.queryByText('The English Book')).not.toBeInTheDocument();
   });
 
+  test("the selected language chip uses the same bg-ink/text-paper pattern as the Bookshelf", async () => {
+    const stats: LanguageStats[] = [
+      {
+        language: 'english',
+        wordsMastered: 12,
+        books: [{ id: 'book-en', title: 'The English Book', completedSections: 2, totalSections: 4 }],
+      },
+      {
+        language: 'spanish',
+        wordsMastered: 3,
+        books: [{ id: 'book-es', title: 'El Libro Espanol', completedSections: 1, totalSections: 1 }],
+      },
+    ];
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+    mockGetStatisticsByLanguage.mockResolvedValue(stats);
+
+    const jsx = await StatisticsPage();
+    render(jsx);
+
+    const selected = screen.getByRole('button', { name: /^english$/i });
+    expect(selected.className).toContain('bg-ink');
+    expect(selected.className).toContain('text-paper');
+
+    const unselected = screen.getByRole('button', { name: /^spanish$/i });
+    expect(unselected.className).toContain('bg-surface');
+    expect(unselected.className).toContain('border-hairline');
+  });
+
   test('shows a message when the user has no stats in any language yet', async () => {
     mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
     mockGetStatisticsByLanguage.mockResolvedValue([]);
