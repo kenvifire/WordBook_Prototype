@@ -91,6 +91,10 @@ async function maybeUnlockNextSectionInner(bookId: string, sectionId: string): P
 
   await sectionRef.update({ status: 'ready_to_read' });
 
+  // The Bookshelf's cached book list (lib/books/listBooks.ts) includes each
+  // book's "N of M sections unlocked" count, which this write just changed.
+  invalidate(`books:${userId}`);
+
   const nextSectionQuery = await db
     .collection('books')
     .doc(bookId)

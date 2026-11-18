@@ -227,4 +227,75 @@ describe('listBooks caching', () => {
     expect(after).toHaveLength(1);
     expect(after[0]).toMatchObject({ title: 'A Story About Dragons', generationStatus: 'pending' });
   });
+
+  // BookshelfPendingPoller refreshes every 3s specifically to catch the
+  // background generation's 'pending' -> 'ready'/'failed' transition; a
+  // cached 'pending' list surviving that transition for listBooks' 15s TTL
+  // would defeat it. Each test below warms the cache while the book is
+  // genuinely pending, lets runGeneration finish, then re-lists.
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  async function startAndWarmPending() {
+    const { bookId } = await startGeneratingBook({
+      topic: 'A Story About Dragons',
+      difficulty: 'beginner',
+      language: 'english',
+      targetWordCount: 150,
+      userId: 'u1',
+    });
+    const warm = await listBooks('u1');
+    expect(warm).toHaveLength(1);
+    expect(warm[0]).toMatchObject({ id: bookId, generationStatus: 'pending' });
+    return bookId;
+  }
+
+  test('runGeneration invalidates the cached list when generation succeeds, so the book shows as ready on the next call', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    const story = deferred<{ title: string; text: string; vocabulary: string[] }>();
+    mockGenerateStory.mockReturnValue(story.promise);
+
+    const bookId = await startAndWarmPending();
+
+    story.resolve({ title: 'The Dragon Tale', text: 'once upon a time a dragon flew', vocabulary: [] });
+    await vi.waitFor(() => {
+      expect(store.get(`books/${bookId}`)?.generationStatus).toBe('ready');
+    });
+
+    const after = await listBooks('u1');
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ id: bookId, title: 'The Dragon Tale', generationStatus: 'ready' });
+    expect(after[0].sectionsTotal).toBeGreaterThan(0);
+  });
+
+  test('runGeneration invalidates the cached list when generation fails, so the book shows as failed on the next call', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    const story = deferred<{ title: string; text: string; vocabulary: string[] }>();
+    mockGenerateStory.mockReturnValue(story.promise);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const bookId = await startAndWarmPending();
+
+      story.reject(new Error('DeepSeek unavailable'));
+      await vi.waitFor(() => {
+        expect(store.get(`books/${bookId}`)?.generationStatus).toBe('failed');
+      });
+
+      const after = await listBooks('u1');
+      expect(after).toHaveLength(1);
+      expect(after[0]).toMatchObject({ id: bookId, generationStatus: 'failed' });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
 });

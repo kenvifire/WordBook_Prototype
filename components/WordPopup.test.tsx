@@ -136,9 +136,13 @@ describe('WordPopup', () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false });
     const user = userEvent.setup();
 
-    render(<WordPopup word="gloaming" language="english" bookId="book-1" sectionId="section-1" />);
+    // A word no other test in this file uses: the session word cache
+    // (lib/cache/clientWordCache.ts) is module-level state shared across
+    // this file's tests, so reusing a word another test successfully looks
+    // up would make this test pass or fail depending on test order.
+    render(<WordPopup word="gossamer" language="english" bookId="book-1" sectionId="section-1" />);
 
-    await user.click(screen.getByText('gloaming'));
+    await user.click(screen.getByText('gossamer'));
 
     expect(await screen.findByText('Could not look up this word.')).toBeInTheDocument();
   });

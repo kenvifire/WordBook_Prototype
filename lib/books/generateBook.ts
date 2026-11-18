@@ -225,6 +225,13 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
     }
 
     await bookRef.update({ title: result.title, generationStatus: 'ready' });
+
+    // listBooks caches the Bookshelf's list (generationStatus, title,
+    // section counts) per uid — invalidate it on this 'pending' -> 'ready'
+    // transition so BookshelfPendingPoller's next 3s refresh sees the
+    // finished book instead of a stale cached 'pending' entry for up to
+    // listBooks' 15s TTL.
+    invalidate(`books:${input.userId}`);
   } catch (error) {
     // Matches app/api/words/[wordId]/rate/route.ts's unlock-check catch
     // pattern: log server-side, never throw out of this fire-and-forget
@@ -253,6 +260,11 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
     await bookRef.update({ generationStatus: 'failed' }).catch((updateError) => {
       console.error('Failed to mark book generation as failed', bookId, updateError);
     });
+
+    // Same reason as the success path above: the 'pending' -> 'failed'
+    // transition must be visible on the Bookshelf's next refresh, not after
+    // listBooks' cache TTL expires.
+    invalidate(`books:${input.userId}`);
   }
 }
 

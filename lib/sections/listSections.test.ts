@@ -19,6 +19,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { getUserProfile } from '@/lib/users/userProfile';
 import { invalidatePrefix } from '@/lib/cache/serverCache';
 import { listSections } from './listSections';
+import { listBooks } from '@/lib/books/listBooks';
 import { maybeUnlockNextSection } from './sectionService';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
@@ -116,6 +117,11 @@ function createFakeFirestore() {
       orderBy(field: string) {
         return makeQuery(path, [], field);
       },
+      // Plain, unfiltered collection.get() — listBooks uses this for each
+      // book's `sections` subcollection.
+      get() {
+        return makeQuery(path, []).get();
+      },
     };
   }
 
@@ -155,6 +161,7 @@ beforeEach(() => {
   // into another's, the same fix lib/books/listBooks.test.ts and
   // lib/users/userProfile.test.ts needed for their own caches.
   invalidatePrefix('sections:');
+  invalidatePrefix('books:');
 });
 
 describe('listSections caching', () => {
@@ -189,5 +196,27 @@ describe('listSections caching', () => {
     // The returned status reflects the unlock, not the stale cached value.
     const after = await listSections('book-1');
     expect(after.find((s) => s.id === 'section-1')?.status).toBe('ready_to_read');
+  });
+
+  test("maybeUnlockNextSection also invalidates the owner's cached book list, so the Bookshelf's unlocked-section count updates", async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    putBook(store, 'book-1', { userId: 'u1', title: 'Book One', language: 'english' });
+    putSection(store, 'book-1', 'section-1', {
+      sectionNumber: 1,
+      status: 'ready_to_practice',
+      wordIds: ['w1'],
+    });
+    putSection(store, 'book-1', 'section-2', { sectionNumber: 2, status: 'locked', wordIds: [] });
+    putWord(store, 'w1', { lastRating: 'good' });
+
+    // Warm the Bookshelf's cache with the pre-unlock count.
+    const before = await listBooks('u1');
+    expect(before[0]).toMatchObject({ id: 'book-1', sectionsTotal: 2, sectionsUnlocked: 0 });
+
+    await maybeUnlockNextSection('book-1', 'section-1');
+
+    const after = await listBooks('u1');
+    expect(after[0]).toMatchObject({ id: 'book-1', sectionsTotal: 2, sectionsUnlocked: 1 });
   });
 });
