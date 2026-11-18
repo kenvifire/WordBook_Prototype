@@ -1,3 +1,26 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --color-paper: 239 235 228;
+  --color-surface: 247 244 238;
+  --color-ink: 31 36 32;
+  --color-ink-muted: 91 96 88;
+  --color-hairline: 217 211 198;
+  --color-locked: 154 148 138;
+  --color-practicing: 176 138 78;
+  --color-unlocked: 63 102 82;
+  --color-error: 168 80 61;
+}
+:root[data-theme='dark'] {
+  --color-paper: 26 29 25;
+  --color-surface: 35 39 31;
+  --color-ink: 237 234 226;
+  --color-ink-muted: 166 169 158;
+  --color-hairline: 56 60 50;
+  --color-locked: 110 106 96;
+  --color-practicing: 209 166 96;
+  --color-unlocked: 92 140 115;
+  --color-error: 201 122 100;
+}
