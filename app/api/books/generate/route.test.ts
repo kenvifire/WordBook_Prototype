@@ -30,6 +30,7 @@ function validBody(overrides: Record<string, unknown> = {}) {
     difficulty: 'beginner',
     language: 'es',
     targetWordCount: 20,
+    newWordPercentage: 50,
     ...overrides,
   };
 }
@@ -88,8 +89,30 @@ describe('POST /api/books/generate', () => {
       difficulty: body.difficulty,
       language: body.language,
       targetWordCount: body.targetWordCount,
+      newWordPercentage: body.newWordPercentage,
       userId: 'user-1',
     });
+  });
+
+  test('rejects a newWordPercentage outside 0-100', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const tooLow = await POST(makeRequest(validBody({ newWordPercentage: -1 })));
+    expect(tooLow.status).toBe(400);
+    expect(mockStartGeneratingBook).not.toHaveBeenCalled();
+
+    const tooHigh = await POST(makeRequest(validBody({ newWordPercentage: 101 })));
+    expect(tooHigh.status).toBe(400);
+    expect(mockStartGeneratingBook).not.toHaveBeenCalled();
+  });
+
+  test('rejects a non-integer newWordPercentage', async () => {
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const response = await POST(makeRequest(validBody({ newWordPercentage: 50.5 })));
+
+    expect(response.status).toBe(400);
+    expect(mockStartGeneratingBook).not.toHaveBeenCalled();
   });
 
   test('Fix 3: normalizes a mixed-case language ("Spanish") to lowercase before passing it to startGeneratingBook', async () => {

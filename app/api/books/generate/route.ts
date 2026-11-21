@@ -11,12 +11,15 @@ function isValidDifficulty(value: unknown): value is Difficulty {
 
 const MIN_TARGET_WORD_COUNT = 5;
 const MAX_TARGET_WORD_COUNT = 50;
+const MIN_NEW_WORD_PERCENTAGE = 0;
+const MAX_NEW_WORD_PERCENTAGE = 100;
 
 type GenerateBody = {
   topic?: unknown;
   difficulty?: unknown;
   language?: unknown;
   targetWordCount?: unknown;
+  newWordPercentage?: unknown;
 };
 
 /**
@@ -80,11 +83,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid targetWordCount' }, { status: 400 });
   }
 
+  const newWordPercentage = body.newWordPercentage;
+  if (
+    typeof newWordPercentage !== 'number' ||
+    !Number.isInteger(newWordPercentage) ||
+    newWordPercentage < MIN_NEW_WORD_PERCENTAGE ||
+    newWordPercentage > MAX_NEW_WORD_PERCENTAGE
+  ) {
+    return NextResponse.json({ error: 'Invalid newWordPercentage' }, { status: 400 });
+  }
+
   const { bookId } = await startGeneratingBook({
     topic: body.topic,
     difficulty: body.difficulty,
     language,
     targetWordCount,
+    newWordPercentage,
     userId: user.uid,
   });
 

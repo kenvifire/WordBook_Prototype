@@ -135,6 +135,26 @@ function createFakeFirestore(options: { failWordCreate?: (wordId: string) => boo
         store.set(ref.path, { ...data });
         return ref;
       },
+      // Single-field equality query, same shape/limits as the real app's
+      // only other .where() usage (lib/stats/statsService.ts): filters by
+      // one field, callers filter further (e.g. by language) in memory.
+      where(field: string, op: string, value: unknown) {
+        if (op !== '==') {
+          throw new Error(`Unsupported operator in fake: ${op}`);
+        }
+        return {
+          async get() {
+            const prefix = `${path}/`;
+            const docs = Array.from(store.entries())
+              .filter(
+                ([docPath, data]) =>
+                  docPath.startsWith(prefix) && (data as Record<string, unknown>)[field] === value
+              )
+              .map(([, data]) => ({ data: () => ({ ...data }) }));
+            return { docs };
+          },
+        };
+      },
     };
   }
 
@@ -177,9 +197,19 @@ function makeInput(overrides: Partial<Parameters<typeof startGeneratingBook>[0]>
     difficulty: 'intermediate' as const,
     language: 'english',
     targetWordCount: 10,
+    newWordPercentage: 50,
     userId: 'user-1',
     ...overrides,
   };
+}
+
+function putWord(
+  store: Map<string, StoredDoc>,
+  userId: string,
+  language: string,
+  word: string
+) {
+  store.set(`words/${buildWordId(userId, language, word)}`, { userId, language, word });
 }
 
 // Deterministic story text long enough that splitByFixedWordCount (150
@@ -233,6 +263,7 @@ describe('startGeneratingBook', () => {
       topic: 'a brave fox',
       difficultyLevel: 'intermediate',
       targetWordCount: 10,
+      newWordPercentage: 50,
       generationStatus: 'pending',
     });
     expect(bookDoc.createdAt).toEqual({ __fakeServerTimestamp: true });
@@ -243,6 +274,53 @@ describe('startGeneratingBook', () => {
 
     // Clean up the dangling promise so it doesn't stay pending forever.
     resolveGeneration?.({ title: 'T', text: longStoryText(5), vocabulary: [] });
+  });
+
+  test('passes newWordPercentage through to generateStory', async () => {
+    const { db } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGenerateStory.mockResolvedValue({ title: 'T', text: longStoryText(5), vocabulary: [] });
+
+    await startGeneratingBook(makeInput({ newWordPercentage: 80 }));
+
+    await vi.waitFor(() => {
+      expect(mockGenerateStory).toHaveBeenCalled();
+    });
+    expect(mockGenerateStory).toHaveBeenCalledWith(
+      expect.objectContaining({ newWordPercentage: 80 })
+    );
+  });
+
+  test("fetches the user's existing known words in this language and passes them to generateStory, excluding other languages and other users", async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGenerateStory.mockResolvedValue({ title: 'T', text: longStoryText(5), vocabulary: [] });
+
+    putWord(store, 'user-1', 'english', 'cat');
+    putWord(store, 'user-1', 'english', 'dog');
+    putWord(store, 'user-1', 'french', 'chat'); // different language — excluded
+    putWord(store, 'user-2', 'english', 'bird'); // different user — excluded
+
+    await startGeneratingBook(makeInput({ language: 'english' }));
+
+    await vi.waitFor(() => {
+      expect(mockGenerateStory).toHaveBeenCalled();
+    });
+    const callArg = mockGenerateStory.mock.calls[0][0];
+    expect(callArg.knownWords.sort()).toEqual(['cat', 'dog']);
+  });
+
+  test('passes an empty knownWords array when the user has no existing words in this language', async () => {
+    const { db } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+    mockGenerateStory.mockResolvedValue({ title: 'T', text: longStoryText(5), vocabulary: [] });
+
+    await startGeneratingBook(makeInput());
+
+    await vi.waitFor(() => {
+      expect(mockGenerateStory).toHaveBeenCalled();
+    });
+    expect(mockGenerateStory).toHaveBeenCalledWith(expect.objectContaining({ knownWords: [] }));
   });
 
   test('on successful generation, writes sections (fixed word count) and words from the vocabulary list, then sets generationStatus: ready', async () => {

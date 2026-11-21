@@ -14,8 +14,15 @@ export type GenerateBookInput = {
   difficulty: 'beginner' | 'intermediate' | 'advanced';
   language: string;
   targetWordCount: number;
+  newWordPercentage: number; // 0–100, validated by the caller (route)
   userId: string;
 };
+
+// Caps how many of a user's existing words get sent to DeepSeek as
+// "already known" context — a prolific learner could otherwise have
+// hundreds of words in one language, bloating the prompt for no real
+// benefit beyond this (arbitrary, but generous) sample size.
+const MAX_KNOWN_WORDS_IN_PROMPT = 200;
 
 export type GenerateBookResult = { bookId: string };
 
@@ -92,11 +99,25 @@ async function runGeneration(bookId: string, input: GenerateBookInput): Promise<
   let sectionDocRefs: FirebaseFirestore.DocumentReference[] = [];
 
   try {
+    // Same single-field-equality-then-filter-in-memory pattern already used
+    // by lib/stats/statsService.ts — no composite index needed.
+    const existingWordsSnap = await db
+      .collection('words')
+      .where('userId', '==', input.userId)
+      .get();
+    const knownWords = existingWordsSnap.docs
+      .map((doc) => doc.data() as { language: string; word: string })
+      .filter((w) => w.language === input.language)
+      .map((w) => w.word)
+      .slice(0, MAX_KNOWN_WORDS_IN_PROMPT);
+
     const result = await generateStory({
       topic: input.topic,
       difficulty: input.difficulty,
       language: input.language,
       targetWordCount: input.targetWordCount,
+      knownWords,
+      newWordPercentage: input.newWordPercentage,
     });
 
     const sections = splitByFixedWordCount(result.text);
@@ -288,6 +309,7 @@ export async function startGeneratingBook(input: GenerateBookInput): Promise<Gen
     topic: input.topic,
     difficultyLevel: input.difficulty,
     targetWordCount: input.targetWordCount,
+    newWordPercentage: input.newWordPercentage,
     generationStatus: 'pending',
     createdAt: FieldValue.serverTimestamp(),
   });

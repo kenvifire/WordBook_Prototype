@@ -51,12 +51,51 @@ describe('GenerateBookForm', () => {
       difficulty: 'intermediate',
       language: 'spanish',
       targetWordCount: 30,
+      newWordPercentage: 50,
     });
 
     // The form's own job ends at kicking off generation and refreshing —
     // the Bookshelf server render is what actually shows the new book as
     // pending once it re-fetches (see app/bookshelf/page.test.tsx).
     await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1));
+  });
+
+  test('lets the user change the new word percentage, included in the submitted body', async () => {
+    mockFetchOnce({ ok: true, json: async () => ({ bookId: 'book-1' }) });
+
+    const user = userEvent.setup();
+    render(<GenerateBookForm />);
+
+    await user.type(screen.getByLabelText(/topic/i), 'a mystery on a train');
+    await user.type(screen.getByLabelText(/target language/i), 'spanish');
+
+    const percentageInput = screen.getByLabelText(/new word percentage/i);
+    await user.clear(percentageInput);
+    await user.type(percentageInput, '75');
+
+    await user.click(screen.getByRole('button', { name: /generate book/i }));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.newWordPercentage).toBe(75);
+  });
+
+  test('rejects a new word percentage outside 0-100 client-side, without calling fetch', async () => {
+    const user = userEvent.setup();
+    render(<GenerateBookForm />);
+
+    await user.type(screen.getByLabelText(/topic/i), 'space adventure');
+    await user.type(screen.getByLabelText(/target language/i), 'french');
+
+    const percentageInput = screen.getByLabelText(/new word percentage/i);
+    await user.clear(percentageInput);
+    await user.type(percentageInput, '150');
+
+    await user.click(screen.getByRole('button', { name: /generate book/i }));
+
+    expect(await screen.findByText(/between 0 and 100/i)).toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   test('rejects a targetWordCount outside the 5-50 bound client-side, without calling fetch', async () => {

@@ -17,6 +17,11 @@ export type GenerateStoryInput = {
   difficulty: 'beginner' | 'intermediate' | 'advanced';
   language: string;
   targetWordCount: number; // 5–50, validated by the caller (Task 4)
+  // Words this user already has in this language (capped by the caller —
+  // see generateBook.ts's MAX_KNOWN_WORDS_IN_PROMPT), used to steer the
+  // model toward genuinely new vocabulary rather than words already learned.
+  knownWords: string[];
+  newWordPercentage: number; // 0–100, validated by the caller
 };
 
 export type GenerateStoryResult = { title: string; text: string; vocabulary: string[] };
@@ -36,7 +41,7 @@ function stripCodeFence(response: string): string {
 }
 
 function buildPrompt(input: GenerateStoryInput): { system: string; user: string } {
-  const { topic, difficulty, language, targetWordCount } = input;
+  const { topic, difficulty, language, targetWordCount, knownWords, newWordPercentage } = input;
 
   const system =
     'You are a story writer for a language-learning app. Write engaging, level-appropriate short ' +
@@ -46,12 +51,23 @@ function buildPrompt(input: GenerateStoryInput): { system: string; user: string 
     'the requested language), and "vocabulary" (an array of strings: exactly the notable, non-common ' +
     "words you wove into the story, spelled as they appear in the story's own language).";
 
+  // Only meaningful when there's something to differentiate against — with
+  // no known words, every vocabulary word is new by definition, and asking
+  // for "X% new" would be a no-op instruction.
+  const newWordClause =
+    knownWords.length > 0
+      ? ` The learner already knows these ${language} words: ${knownWords.join(', ')}. Aim for ` +
+        `approximately ${newWordPercentage}% of the story's distinct vocabulary words to be NEW ` +
+        '(not in that list); the rest may reuse already-known words to keep the story readable.'
+      : '';
+
   const user =
     `Write a ${difficulty}-level story in ${language} about: ${topic}. ` +
     `Weave in approximately ${targetWordCount} notable vocabulary words appropriate for a ${difficulty} ` +
     `learner of ${language}, surrounded by enough connective prose that the story is long enough to be ` +
-    `split into several 150-word reading sections (so, well more than ${targetWordCount} words in total). ` +
-    'Return JSON only, matching exactly: {"title": "...", "text": "...", "vocabulary": ["...", "..."]}.';
+    `split into several 150-word reading sections (so, well more than ${targetWordCount} words in total).` +
+    newWordClause +
+    ' Return JSON only, matching exactly: {"title": "...", "text": "...", "vocabulary": ["...", "..."]}.';
 
   return { system, user };
 }
