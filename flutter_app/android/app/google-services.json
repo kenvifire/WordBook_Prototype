@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "604849570002",
+    "project_id": "wordbook-eda86",
+    "storage_bucket": "wordbook-eda86.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:604849570002:android:33c24d0d6bbdebbfec6d0b",
+        "android_client_info": {
+          "package_name": "com.itluobo.wordbook"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "604849570002-ddtuin96183pl9kgag0bm69stopgqne4.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.itluobo.wordbook",
+            "certificate_hash": "d7b518e2e834a7a500d4121285400eb3be23154f"
+          }
+        },
+        {
+          "client_id": "604849570002-794p3vl0s35ga47a9g6ndf1ses92b7hf.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC2vhmjflG1ONYuye3nOasTYHdZYopLyCQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "604849570002-794p3vl0s35ga47a9g6ndf1ses92b7hf.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "604849570002-bi06g850cnvi3diqetc0hhd8snd6iqvu.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.itluobo.wordbook"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

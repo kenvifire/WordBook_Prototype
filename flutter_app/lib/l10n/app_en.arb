@@ -1,0 +1,123 @@
+{
+  "@@locale": "en",
+  "appName": "WordBook",
+  "@appName": {
+    "description": "The name of the application"
+  },
+
+  "settings": "Settings",
+  "preferences": "Preferences",
+  "profile": "Profile",
+  "about": "About",
+  "signOut": "Sign Out",
+  "signOutConfirm": "Are you sure you want to sign out?",
+  "cancel": "Cancel",
+
+  "language": "Language",
+  "appLanguage": "App Language",
+  "appLanguageDescription": "Change the language of the app interface",
+  "nativeLanguage": "Native Language",
+  "nativeLanguageDescription": "Word definitions will be shown in your native language",
+  "selectLanguage": "Select Language",
+
+  "appearance": "Appearance",
+  "lightMode": "Light Mode",
+  "lightModeDescription": "Always use light theme",
+  "darkMode": "Dark Mode",
+  "darkModeDescription": "Always use dark theme",
+  "systemDefault": "System Default",
+  "systemDefaultDescription": "Follow system theme settings",
+
+  "reading": "Reading",
+  "fontSize": "Font Size",
+  "sampleText": "Sample text with current font size",
+
+  "bookshelf": "Bookshelf",
+  "addBook": "Add Book",
+  "noBooks": "No books yet",
+  "noBooksDescription": "Tap the + button to add your first book",
+  "deleteBook": "Delete Book",
+  "deleteBookConfirm": "Are you sure you want to delete this book?",
+  "delete": "Delete",
+
+  "vocabulary": "Vocabulary",
+  "words": "Words",
+  "wordsLearned": "Words Learned",
+  "wordsToLearn": "Words to Learn",
+  "practice": "Practice",
+  "startPractice": "Start Practice",
+  "extractVocabulary": "Extract Vocabulary",
+  "extracting": "Extracting...",
+  "wordsExtracted": "{count} words extracted",
+  "@wordsExtracted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+
+  "statistics": "Statistics",
+  "today": "Today",
+  "thisWeek": "This Week",
+  "thisMonth": "This Month",
+  "allTime": "All Time",
+  "totalWords": "Total Words",
+  "totalBooks": "Total Books",
+  "studyTime": "Study Time",
+  "streak": "Streak",
+  "days": "{count} days",
+  "@days": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+
+  "subscription": "Subscription",
+  "upgradeToPro": "Upgrade to Pro",
+  "wordBookPro": "WordBook Pro",
+  "freePlan": "Free Plan",
+  "premiumAccess": "You have premium access",
+  "upgradeForMore": "Upgrade for more features",
+  "manageSubscription": "Manage Subscription",
+  "restorePurchases": "Restore Purchases",
+  "restoreSuccess": "Purchases restored successfully!",
+  "noRestorePurchases": "No purchases to restore",
+  "subscribeNow": "Subscribe Now",
+  "subscriptionNotAvailable": "Subscriptions are not available yet. Please try again later.",
+
+  "unlimitedBooks": "Unlimited books",
+  "unlimitedWordExtraction": "Unlimited word extraction",
+  "advancedPractice": "Advanced vocabulary practice",
+  "detailedStatistics": "Detailed statistics",
+  "cloudSync": "Cloud sync",
+  "prioritySupport": "Priority support",
+
+  "error": "Error",
+  "tryAgain": "Try Again",
+  "loading": "Loading...",
+  "save": "Save",
+  "done": "Done",
+  "next": "Next",
+  "previous": "Previous",
+  "skip": "Skip",
+  "continue_": "Continue",
+  "confirm": "Confirm",
+  "selected": "Selected",
+
+  "wordsSettings": "Words Settings",
+  "practiceSettings": "Practice settings and section size",
+  "manageAccount": "Manage your account information",
+  "fontThemeDisplay": "Font size, themes, and display",
+
+  "version": "Version {version}",
+  "@version": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  }
+}
