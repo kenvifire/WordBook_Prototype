@@ -64,7 +64,7 @@ import {
   deletePendingBookText,
 } from '@/lib/storage/pendingBookText';
 import { buildWordId } from '@/lib/firebase/wordId';
-import { addBook, finalizeSectioning } from './bookService';
+import { addBook, finalizeSectioning, deleteBook } from './bookService';
 
 const mockGetFirestore = getFirestore as unknown as ReturnType<typeof vi.fn>;
 const mockTranslateWord = translateWord as unknown as ReturnType<typeof vi.fn>;
@@ -168,6 +168,9 @@ function createFakeFirestore() {
       async update(data: Record<string, unknown>) {
         applyUpdate(path, data);
       },
+      async delete() {
+        store.delete(path);
+      },
       collection(name: string) {
         return makeCollectionRef(`${path}/${name}`);
       },
@@ -184,6 +187,20 @@ function createFakeFirestore() {
         const ref = makeDocRef(`${path}/${nextId()}`);
         store.set(ref.path, { ...data });
         return ref;
+      },
+      // Plain "every doc directly under this collection path" listing — no
+      // query filter, since deleteBook only ever needs the whole `sections`
+      // subcollection, not a filtered subset. Mirrors real Firestore's
+      // QueryDocumentSnapshot shape (.ref, .id, .data()), not a bare DocumentRef.
+      async get() {
+        const prefix = `${path}/`;
+        const docs = Array.from(store.entries())
+          .filter(([docPath]) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
+          .map(([docPath, data]) => {
+            const ref = makeDocRef(docPath);
+            return { id: ref.id, ref, data: () => ({ ...data }) };
+          });
+        return { docs };
       },
     };
   }
@@ -247,6 +264,9 @@ function createFakeFirestore() {
       return {
         update(ref: { path: string }, data: Record<string, unknown>) {
           ops.push(() => applyUpdate(ref.path, data));
+        },
+        delete(ref: { path: string }) {
+          ops.push(() => store.delete(ref.path));
         },
         async commit() {
           for (const op of ops) op();
@@ -1077,5 +1097,72 @@ describe('finalizeSectioning', () => {
     // the loser's transaction saw sectioningMethod already claimed and
     // returned before reaching readPendingBookText at all.
     expect(mockReadPendingBookText).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('deleteBook', () => {
+  test('deletes the book document and every doc in its sections subcollection', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    const rawText = Array.from({ length: 320 }, () => 'the').join(' ');
+    const { bookId } = await addBook({
+      title: 'Book To Delete',
+      format: 'text',
+      rawText,
+      userId: 'user-1',
+    });
+    await finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 });
+
+    expect(sectionsForBook(store, bookId)).toHaveLength(2);
+    expect(store.has(`books/${bookId}`)).toBe(true);
+
+    await deleteBook({ bookId, userId: 'user-1' });
+
+    expect(store.has(`books/${bookId}`)).toBe(false);
+    expect(sectionsForBook(store, bookId)).toHaveLength(0);
+  });
+
+  // Words are deliberately left untouched — same reasoning already
+  // documented in generateBook.ts's failure-cleanup path: a word is global,
+  // per-user vocabulary independent of any one book's fate, and may still
+  // be due for review or linked to another book. Deleting a book must never
+  // delete or mutate word docs, even ones whose sectionRefs point at this
+  // book's now-gone sections.
+  test('does not touch word documents, even ones whose sectionRefs point at this book', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    const word = uniqueWord(0);
+    const { bookId } = await addBook({
+      title: 'Book With Words',
+      format: 'text',
+      rawText: word,
+      userId: 'user-1',
+    });
+    await finalizeSectioning({ bookId, userId: 'user-1', method: 'by_page', pagesPerSection: 1 });
+
+    const wordId = buildWordId('user-1', 'english', word);
+    expect(store.has(`words/${wordId}`)).toBe(true);
+    const wordDocBefore = store.get(`words/${wordId}`);
+
+    await deleteBook({ bookId, userId: 'user-1' });
+
+    expect(store.get(`words/${wordId}`)).toEqual(wordDocBefore);
+  });
+
+  test('is a safe no-op when the book has no sections subcollection at all', async () => {
+    const { db, store } = createFakeFirestore();
+    mockGetFirestore.mockReturnValue(db);
+
+    const { bookId } = await addBook({
+      title: 'Never Sectioned Book',
+      format: 'text',
+      rawText: 'some pending text',
+      userId: 'user-1',
+    });
+
+    await expect(deleteBook({ bookId, userId: 'user-1' })).resolves.toBeUndefined();
+    expect(store.has(`books/${bookId}`)).toBe(false);
   });
 });

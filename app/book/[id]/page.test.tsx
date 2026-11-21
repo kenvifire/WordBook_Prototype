@@ -250,6 +250,27 @@ describe('BookDetailPage', () => {
     expect(screen.queryByRole('heading', { name: /set up/i })).not.toBeInTheDocument();
   });
 
+  test('a book with a sectioningMethod already set shows a Delete book button', async () => {
+    const db = createFakeFirestore(
+      {
+        userId: 'user-1',
+        title: 'My Book',
+        source: 'uploaded',
+        sectioningMethod: 'by_page',
+        detectedChapterBreaks: null,
+        language: 'en',
+      },
+      [{ sectionNumber: 1, status: 'ready_to_practice' }]
+    );
+    mockGetFirestore.mockReturnValue(db);
+    mockGetAuthedUser.mockResolvedValue({ uid: 'user-1' });
+
+    const jsx = await BookDetailPage({ params: Promise.resolve({ id: 'book-1' }) });
+    render(jsx);
+
+    expect(screen.getByRole('button', { name: 'Delete book' })).toBeInTheDocument();
+  });
+
   test('ReadingModeToggle gives the active mode bg-ink/text-paper and the inactive mode the neutral style', async () => {
     const db = createFakeFirestore(
       {

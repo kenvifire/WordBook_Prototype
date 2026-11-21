@@ -112,8 +112,21 @@ function createFakeFirestore() {
         return { empty: docs.length === 0, docs };
       },
       where(field: string, op: string, value: unknown) {
-        if (path !== 'books' || field !== 'userId' || op !== '==') {
+        if ((path !== 'books' && path !== 'words') || field !== 'userId' || op !== '==') {
           throw new Error(`Unsupported filter in fake: ${path} ${field} ${op}`);
+        }
+        if (path === 'words') {
+          // Plain equality filter for generateBook.ts's known-words lookup —
+          // no orderBy, no call tracking (booksGetCalls is books-specific).
+          return {
+            async get() {
+              const prefix = 'words/';
+              const docs = Array.from(store.entries())
+                .filter(([key, data]) => key.startsWith(prefix) && (data as any).userId === value)
+                .map(([, data]) => ({ data: () => ({ ...data }) }));
+              return { docs };
+            },
+          };
         }
         return {
           orderBy() {
@@ -220,6 +233,7 @@ describe('listBooks caching', () => {
       difficulty: 'beginner',
       language: 'english',
       targetWordCount: 150,
+      newWordPercentage: 50,
       userId: 'u1',
     });
 
@@ -249,6 +263,7 @@ describe('listBooks caching', () => {
       difficulty: 'beginner',
       language: 'english',
       targetWordCount: 150,
+      newWordPercentage: 50,
       userId: 'u1',
     });
     const warm = await listBooks('u1');

@@ -38,6 +38,8 @@ describe('generateStory', () => {
       difficulty: 'intermediate',
       language: 'english',
       targetWordCount: 20,
+      knownWords: [],
+      newWordPercentage: 50,
     });
 
     expect(result).toEqual(fixture);
@@ -63,6 +65,46 @@ describe('generateStory', () => {
     expect(promptText).toContain('20');
   });
 
+  test('with no known words, the prompt has no new-word-percentage constraint (everything is new already)', async () => {
+    const fixture = { title: 'A Tale', text: 'word '.repeat(30), vocabulary: ['word'] };
+    const fetchMock = vi.fn().mockResolvedValue(mockChatCompletion(JSON.stringify(fixture)));
+    global.fetch = fetchMock;
+
+    await generateStory({
+      topic: 'x',
+      difficulty: 'beginner',
+      language: 'english',
+      targetWordCount: 10,
+      knownWords: [],
+      newWordPercentage: 70,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const promptText = body.messages.map((m: { content: string }) => m.content).join(' ');
+    expect(promptText).not.toContain('70%');
+  });
+
+  test('with known words, the prompt lists them and asks for the given new-word percentage', async () => {
+    const fixture = { title: 'A Tale', text: 'word '.repeat(30), vocabulary: ['word'] };
+    const fetchMock = vi.fn().mockResolvedValue(mockChatCompletion(JSON.stringify(fixture)));
+    global.fetch = fetchMock;
+
+    await generateStory({
+      topic: 'x',
+      difficulty: 'beginner',
+      language: 'english',
+      targetWordCount: 10,
+      knownWords: ['cat', 'dog'],
+      newWordPercentage: 70,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const promptText = body.messages.map((m: { content: string }) => m.content).join(' ');
+    expect(promptText).toContain('cat');
+    expect(promptText).toContain('dog');
+    expect(promptText).toContain('70%');
+  });
+
   test('parses a JSON response wrapped in a markdown code fence', async () => {
     const fixture = { title: 'Fenced Tale', text: 'word '.repeat(30), vocabulary: ['word'] };
     const fenced = '```json\n' + JSON.stringify(fixture) + '\n```';
@@ -73,6 +115,8 @@ describe('generateStory', () => {
       difficulty: 'beginner',
       language: 'english',
       targetWordCount: 10,
+      knownWords: [],
+      newWordPercentage: 50,
     });
 
     expect(result).toEqual(fixture);
@@ -83,7 +127,7 @@ describe('generateStory', () => {
     global.fetch = vi.fn().mockResolvedValue(mockChatCompletion(JSON.stringify(incomplete)));
 
     await expect(
-      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10 })
+      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10, knownWords: [], newWordPercentage: 50 })
     ).rejects.toThrow();
   });
 
@@ -92,7 +136,7 @@ describe('generateStory', () => {
     global.fetch = vi.fn().mockResolvedValue(mockChatCompletion(JSON.stringify(emptyText)));
 
     await expect(
-      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10 })
+      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10, knownWords: [], newWordPercentage: 50 })
     ).rejects.toThrow();
   });
 
@@ -100,7 +144,7 @@ describe('generateStory', () => {
     global.fetch = vi.fn().mockResolvedValue(mockChatCompletion('not json at all'));
 
     await expect(
-      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10 })
+      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10, knownWords: [], newWordPercentage: 50 })
     ).rejects.toThrow();
   });
 
@@ -112,7 +156,7 @@ describe('generateStory', () => {
     } as Response);
 
     await expect(
-      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10 })
+      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10, knownWords: [], newWordPercentage: 50 })
     ).rejects.toThrow();
   });
 
@@ -120,7 +164,7 @@ describe('generateStory', () => {
     global.fetch = vi.fn().mockRejectedValue(new DOMException('The operation was aborted.', 'TimeoutError'));
 
     await expect(
-      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10 })
+      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10, knownWords: [], newWordPercentage: 50 })
     ).rejects.toThrow();
   });
 
@@ -130,7 +174,7 @@ describe('generateStory', () => {
     global.fetch = fetchMock;
 
     await expect(
-      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10 })
+      generateStory({ topic: 'x', difficulty: 'beginner', language: 'english', targetWordCount: 10, knownWords: [], newWordPercentage: 50 })
     ).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
