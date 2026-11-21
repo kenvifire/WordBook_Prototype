@@ -45,6 +45,10 @@ jobs:
           echo "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H proxy.itluobo.com >> ~/.ssh/known_hosts 2>/dev/null
+          # rrsync on the server restricts paths to be relative to its
+          # configured dir (/var/www/wb) rather than substituting it for
+          # whatever the client sends — so the destination here is the
+          # restricted root ("/"), not /var/www/wb itself.
           rsync -avz --delete \
             -e "ssh -i ~/.ssh/deploy_key -o BatchMode=yes" \
-            build/web/ root@proxy.itluobo.com:/var/www/wb/
+            build/web/ root@proxy.itluobo.com:/
