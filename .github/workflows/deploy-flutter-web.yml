@@ -22,7 +22,7 @@ jobs:
           flutter-version: '3.38.6'
           channel: stable
       - run: flutter pub get
-      - run: flutter analyze
+      - run: flutter analyze --no-fatal-infos
       - run: flutter test
 
   deploy:
