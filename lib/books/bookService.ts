@@ -259,6 +259,31 @@ export async function addBook(input: AddBookInput): Promise<AddBookResult> {
   return { bookId };
 }
 
+// Words are never touched here, on purpose: a word is global, per-user
+// vocabulary independent of any one book's fate (same reasoning as
+// generateBook.ts's failure-cleanup path, which also never deletes words).
+// A word whose sectionRefs still point at this book's now-deleted sections
+// is left with a stale reference — already a tolerated shape, since
+// sectionRefs is an array a word can accumulate entries into from several
+// books over its life.
+export async function deleteBook(params: { bookId: string; userId: string }): Promise<void> {
+  const { bookId, userId } = params;
+  const db = getFirestore(getAdminApp());
+  const bookRef = db.collection('books').doc(bookId);
+
+  const sectionsSnap = await bookRef.collection('sections').get();
+
+  const batch = db.batch();
+  for (const sectionDoc of sectionsSnap.docs) {
+    batch.delete(sectionDoc.ref);
+  }
+  batch.delete(bookRef);
+  await batch.commit();
+
+  invalidate(`books:${userId}`);
+  invalidate(`sections:${bookId}`);
+}
+
 export async function finalizeSectioning(params: {
   bookId: string;
   userId: string;

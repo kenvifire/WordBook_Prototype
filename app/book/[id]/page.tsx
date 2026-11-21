@@ -7,6 +7,7 @@ import { listSections } from '@/lib/sections/listSections';
 import SectionStatusBadge from '@/components/SectionStatusBadge';
 import SectioningSetupForm from '@/components/SectioningSetupForm';
 import ReadingModeToggle from '@/components/ReadingModeToggle';
+import DeleteBookButton from '@/components/DeleteBookButton';
 
 type BookData = {
   userId: string;
@@ -141,6 +142,10 @@ export default async function BookDetailPage({
       {bookData.author && <p className="mb-6 text-sm text-ink-muted">by {bookData.author}</p>}
 
       <ReadingModeToggle bookId={id} language={bookData.language ?? ''} sectionList={sectionList} />
+
+      <div className="mt-8 border-t border-hairline pt-4">
+        <DeleteBookButton bookId={id} />
+      </div>
     </main>
   );
 }
