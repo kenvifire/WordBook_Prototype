@@ -204,11 +204,11 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
         },
         child: GridView.builder(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            childAspectRatio: 0.65,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 160,
+            childAspectRatio: 0.72,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
           ),
           itemCount: state.books.length,
           itemBuilder: (context, index) {
