@@ -1,0 +1,1 @@
+ALTER TABLE public.card_progress ADD COLUMN origin text NOT NULL DEFAULT 'story' CHECK (origin IN ('story','tap'));

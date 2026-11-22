@@ -1,0 +1,1 @@
+ALTER TABLE public.learners ADD COLUMN show_translation boolean NOT NULL DEFAULT false;

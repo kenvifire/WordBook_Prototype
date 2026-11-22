@@ -1,0 +1,20 @@
+# Roadmap
+- [x] Design tokens (more vibrant current palette) + components + /styleguide
+- [x] All placeholder routes (learner, onboarding, admin)
+- [x] Learner layout (top bar + bottom tabs), admin sidebar
+- [x] Mock data: Alice (fantasy), Holmes (mystery), Twain frog (funny); B1/B2; 3 sections; 20 cards each
+- [x] Adapt landing page to new colors/buttons
+- [x] Cloud backend: magic-link sign-in, tables + access rules, consent screen, route protection, Alice seeded, data layer
+- [ ] Give admin role to Stephanie's email (blocked: she must sign in once first)
+- [x] Recognition gate (quiz) at /story/:id/gate/:sectionId + read guard
+- [x] Review queue (/review, /review/session), progress screen, real streak, tapped words join review
+- [x] Own books: upload PDF/EPUB/TXT, parts of ~400 words, AI word cards per part (Lovable AI), remove book — code on branch feature/own-books-google
+- [x] Own books: database rules applied, Lovable AI on; scanned-PDF clean-up; fewer/non-repeated words
+- [x] Google sign-in (Managed by Lovable)
+- [x] Quiz: Unlocked label, sticky Next bar
+- [x] Placement test in the app (self-rating, 30 words with 10 fake, 8 sentences; scoring on the server; n8n dropped) + level-based story picks at /match + retest from Progress
+- [ ] Placement item bank reviewed by a fluent speaker; calibrate cuts with 8-10 people of known level
+- [x] Levels A2-C1 across the app (placement result, library switcher with closest-level fallback, story, match, own-book cards, landing)
+- [x] Admin: make a level version of a team story with AI (draft), review page with real Approve / Send back
+- [ ] Make and review A2 and C1 versions of each team story (Admin → Stories)
+- [ ] AI versions: add card translations (now only the word, meaning and example)
