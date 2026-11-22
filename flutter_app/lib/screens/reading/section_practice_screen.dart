@@ -12,6 +12,8 @@ import '../../providers/language_provider.dart';
 import '../../providers/enrichment_provider.dart';
 import '../../screens/settings/words_settings_screen.dart';
 import 'word_list_screen.dart';
+import 'gate_quiz_screen.dart';
+import '../../services/gate/gate_service.dart';
 
 class SectionPracticeScreen extends ConsumerStatefulWidget {
   final Book book;
@@ -398,6 +400,29 @@ class _SectionPracticeScreenState extends ConsumerState<SectionPracticeScreen>
     // continue straight into the reader instead of leaving the user on the
     // section list with a "Start Reading" button they have to tap again.
     Navigator.pop(context, true);
+  }
+
+  /// After flashcards, run the multiple-choice gate quiz (the real unlock
+  /// signal). Falls back to the old recognition-rate unlock when a section
+  /// has too few words for a four-option quiz.
+  Future<void> _startGateQuiz() async {
+    if (canRunQuiz(_words)) {
+      final passed = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => GateQuizScreen(
+            book: widget.book,
+            section: widget.section,
+            words: _words,
+          ),
+        ),
+      );
+      if (passed == true && mounted) {
+        Navigator.pop(context, true);
+      }
+    } else {
+      await _completeAndUnlock();
+    }
   }
 
   @override
@@ -1054,12 +1079,6 @@ class _SectionPracticeScreenState extends ConsumerState<SectionPracticeScreen>
   }
 
   Widget _buildCompletionScreen() {
-    final recognitionRate = _srsService.calculateRecognitionRate(
-      _words,
-      _correctCount,
-    );
-    final passed = recognitionRate >= _threshold;
-
     return Scaffold(
       appBar: AppBar(title: Text('Section ${widget.section.sectionNumber}')),
       body: Center(
@@ -1068,76 +1087,57 @@ class _SectionPracticeScreenState extends ConsumerState<SectionPracticeScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                passed ? Icons.celebration : Icons.trending_up,
-                size: 120,
-                color: passed ? Colors.green : Colors.orange,
-              ),
+              const Icon(Icons.school, size: 120, color: Colors.blue),
               const SizedBox(height: 24),
               Text(
-                passed ? 'Section Unlocked!' : 'Keep Practicing',
+                'Practice complete!',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: 12),
               Text(
-                'Recognition Rate: ${(recognitionRate * 100).toStringAsFixed(0)}%',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  color: passed ? Colors.green : Colors.orange,
-                  fontWeight: FontWeight.bold,
-                ),
+                'You rated $_correctCount of ${_words.length} words as known.',
+                style: Theme.of(context).textTheme.bodyLarge,
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
               Text(
-                '$_correctCount out of ${_words.length} correct',
-                style: Theme.of(context).textTheme.bodyLarge,
+                'Now take the word quiz to unlock this section.',
+                style: Theme.of(context).textTheme.bodyMedium,
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 32),
-              if (passed) ...[
-                Text(
-                  'Great job! This section is now unlocked for reading.',
-                  style: Theme.of(context).textTheme.bodyLarge,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    onPressed: _completeAndUnlock,
-                    icon: const Icon(Icons.check_circle),
-                    label: const Text('Continue to Reading'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                    ),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: _startGateQuiz,
+                  icon: const Icon(Icons.quiz),
+                  label: const Text('Take the Word Quiz'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
                   ),
                 ),
-              ] else ...[
-                Text(
-                  'You need ${(_threshold * 100).toStringAsFixed(0)}% to unlock reading.\nKeep practicing to improve.',
-                  style: Theme.of(context).textTheme.bodyLarge,
-                  textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _currentIndex = 0;
+                      _correctCount = 0;
+                      _showAnswer = false;
+                      _hasStarted = true;
+                    });
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Practice Again'),
                 ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _currentIndex = 0;
-                        _correctCount = 0;
-                        _showAnswer = false;
-                        _hasStarted = true;
-                      });
-                    },
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Practice Again'),
-                  ),
-                ),
-              ],
+              ),
               const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
